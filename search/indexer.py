@@ -90,7 +90,14 @@ class CodeIndexManager:
         """Add embeddings to the index and metadata to the database."""
         if not embedding_results:
             return
-        
+
+        # Force lazy-load of any existing on-disk index + chunk_ids. Without
+        # this, a fresh manager instance (e.g. a hook process) would see
+        # self._index is None, create an empty index, and the subsequent
+        # checkpoint would overwrite the existing FAISS file with the new
+        # batch alone — destroying every previously indexed chunk.
+        _ = self.index
+
         # Initialize index if needed
         if self._index is None:
             embedding_dim = embedding_results[0].embedding.shape[0]
@@ -252,13 +259,15 @@ class CodeIndexManager:
         metadata_entry = self.metadata_db.get(chunk_id)
         if not metadata_entry:
             return []
-        
+
         index_id = metadata_entry['index_id']
-        if self._index is None or index_id >= self._index.ntotal:
+        # Use property to trigger lazy-load from disk.
+        index = self.index
+        if index is None or index_id >= index.ntotal:
             return []
-        
+
         # Get the embedding for this chunk
-        embedding = self._index.reconstruct(index_id)
+        embedding = index.reconstruct(index_id)
         
         # Search for similar chunks (excluding the original)
         results = self.search(embedding, k + 1)
@@ -268,16 +277,20 @@ class CodeIndexManager:
     
     def remove_file_chunks(self, file_path: str, project_name: Optional[str] = None) -> int:
         """Remove all chunks from a specific file.
-        
+
         Args:
             file_path: Path to the file (relative or absolute)
             project_name: Optional project name filter
-            
+
         Returns:
             Number of chunks removed
         """
+        # Force lazy-load so self._chunk_ids reflects the persisted list,
+        # not a fresh empty one on a newly-constructed manager.
+        _ = self.index
+
         chunks_to_remove = []
-        
+
         # Find chunks to remove
         for chunk_id in self._chunk_ids:
             metadata_entry = self.metadata_db.get(chunk_id)
