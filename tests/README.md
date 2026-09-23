@@ -1,264 +1,40 @@
-# Test Suite Documentation
+# Validation
 
-This directory contains comprehensive tests for the Claude Code Embedding Search system.
+All ordinary tests isolate storage, project roots, sockets, and client configuration. Fake models are explicit fixtures and enforce model-thread ownership. Application code has separate 90% line and branch floors, configured in pyproject.toml.
 
-## Test Structure
-
-```
-tests/
-├── run_tests.py              # Test runner script
-├── conftest.py               # Global test configuration  
-├── fixtures/                 # Test fixtures and sample data
-│   ├── conftest.py          # Fixture definitions
-│   └── sample_code.py       # Sample code for testing
-├── unit/                     # Unit tests
-│   ├── test_chunking.py     # AST chunking tests
-│   ├── test_embeddings.py   # Embedding generation tests
-│   ├── test_indexing.py     # Search and indexing tests
-│   └── test_mcp_server.py   # MCP server tests
-└── integration/              # Integration tests
-    └── test_full_flow.py    # End-to-end workflow tests
+```sh
+uv sync --extra server --extra cpu
+uv run pytest --cov --cov-report=json:coverage.json
+uv run python scripts/check_coverage.py
 ```
 
-## Running Tests
+The default suite covers languages, routing, fair scheduling, cache identity, queue bounds, cancellation, concurrent searches/updates, deletion-only updates, watch reconciliation, JSON/Click/Textual behavior, IPC loss/restarts, authentication, migration and transactional rollback. Crash tests kill real subprocesses at four commit boundaries and verify complete old/new generations.
 
-### Using the Test Runner
+## Required acceptance lanes
 
-The test runner provides convenient options for running different test suites:
+Opted-in lanes fail on missing tools, authentication or devices; their default skips are not release approval.
 
-```bash
-# Run all tests
-./tests/run_tests.py
+```sh
+# Wheel and sdist through uv, uvx, pip in venvs, and pipx, outside the checkout:
+CODE_SEARCH_PACKAGING=1 uv run pytest tests/integration/test_packaging.py
 
-# Run only unit tests
-./tests/run_tests.py --unit
+# Native marketplace install/discovery/removal in isolated client configurations:
+CODE_SEARCH_MARKETPLACES=1 uv run pytest tests/integration/test_marketplaces.py
 
-# Run only integration tests
-./tests/run_tests.py --integration
+# Two authenticated Claude CLI processes with distinct generated workspaces:
+CODE_SEARCH_REAL_CLIENTS=1 uv run --extra server --extra cuda pytest tests/integration/test_real_clients.py
 
-# Run specific test categories
-./tests/run_tests.py --chunking    # AST chunking tests
-./tests/run_tests.py --embeddings  # Embedding tests
-./tests/run_tests.py --search      # Search functionality tests
-./tests/run_tests.py --mcp          # MCP server tests
+# Actual normalized embeddings on the selected physical device, no CPU fallback:
+CODE_SEARCH_GPU_BACKEND=cuda uv run --extra server --extra cuda pytest tests/integration/test_gpu.py
+CODE_SEARCH_GPU_BACKEND=rocm uv run --extra server --extra rocm pytest tests/integration/test_gpu.py
 
-# Run with coverage
-./tests/run_tests.py --coverage
-
-# Run specific test files
-./tests/run_tests.py unit/test_chunking.py
-./tests/run_tests.py -k "test_chunking_function"
-
-# Verbose output
-./tests/run_tests.py --verbose
-
-# Stop on first failure
-./tests/run_tests.py --stop-on-first-failure
+# Linux user-systemd setup/backend changes/upgrade/cache deletion/uninstall:
+uv run python -m build
+CODE_SEARCH_SYSTEMD_TESTS=1 uv run pytest tests/integration/test_systemd_install.py
 ```
 
-### Using Pytest Directly
+The systemd lane requires both GPU types, Claude/Codex CLIs and an active user systemd manager. It uses a uniquely named temporary unit, disposable package environments and private client configuration, then removes its unit in `finally`. `CODE_SEARCH_TEST_UV_CACHE` can seed its disposable cache using hardlinks. `CODE_SEARCH_MODEL_STORAGE` can supply an already downloaded `models/` directory for the GPU lane. The systemd lane reuses `.test-artifacts/real-model/models` when available; it otherwise downloads independently.
 
-You can also run pytest directly from the project root:
+The two-Claude lane deliberately starts with a cold model cache. A test-only scheduling barrier requires both real tool requests to overlap. Actual Hub file transfers are audited; the test checks one model acquisition/load, no duplicated blob transfer, project isolation and cache reuse. It restarts the service offline and verifies retained indexes, unchanged model blobs, and independent code updates. Authentication is copied into a private temporary client directory and removed in `finally`.
 
-```bash
-# All tests
-pytest
-
-# Specific markers
-pytest -m "unit"
-pytest -m "integration" 
-pytest -m "chunking and not slow"
-
-# Specific files
-pytest tests/unit/test_chunking.py
-
-# With coverage
-pytest --cov=claude_embedding_search --cov-report=html
-```
-
-## Test Categories
-
-Tests are organized by markers for easy filtering:
-
-- **unit**: Fast unit tests for individual components
-- **integration**: Slower tests that test component interactions
-- **chunking**: Tests for AST-based code chunking
-- **embeddings**: Tests for embedding generation  
-- **search**: Tests for indexing and search functionality
-- **mcp**: Tests for MCP server integration
-- **slow**: Long-running tests (excluded by default)
-
-## Test Fixtures
-
-### Sample Codebase
-The test suite includes a comprehensive sample codebase with:
-- Authentication module (auth patterns, error handling)
-- Database module (queries, connection management)
-- API module (endpoints, request handling)
-- Utilities module (helper functions)
-
-### Temporary Directories
-Tests use temporary directories for:
-- Mock project structures
-- Index storage during tests
-- Model cache simulation
-
-### Mock Components
-Many tests use mocked versions of expensive operations:
-- EmbeddingGemma model loading
-- FAISS index operations
-- Database connections
-
-## Key Test Scenarios
-
-### Unit Tests
-
-**AST Chunking (`test_chunking.py`)**
-- Function and class extraction
-- Semantic tag detection
-- Decorator and docstring parsing
-- Complexity calculation
-- Folder structure metadata
-- Error handling for malformed code
-
-**Embedding Generation (`test_embeddings.py`)**
-- Model initialization and caching
-- Prompt creation for different chunk types
-- Batch embedding generation
-- Query embedding creation
-- Metadata preservation
-
-**Indexing and Search (`test_indexing.py`)**
-- FAISS index creation and management
-- Metadata storage in SQLite
-- Search filtering and ranking
-- Similar code discovery
-- Index persistence
-
-**MCP Server (`test_mcp_server.py`)**
-- Tool function implementations
-- Error handling and JSON serialization
-- Component initialization and caching
-- Resource and prompt endpoints
-
-### Integration Tests
-
-**Full Workflow (`test_full_flow.py`)**
-- Complete chunking → embedding → indexing → search flow
-- Directory-wide indexing
-- Search with various filters
-- Performance characteristics
-- Memory usage validation
-- Error handling across components
-
-## Running Tests in Development
-
-### Quick Validation
-```bash
-# Fast unit tests only
-./tests/run_tests.py --unit --quiet
-
-# Test specific functionality
-./tests/run_tests.py --chunking --verbose
-```
-
-### Pre-commit Testing
-```bash
-# Full test suite with coverage
-./tests/run_tests.py --coverage
-
-# Include slow tests
-./tests/run_tests.py --slow
-```
-
-### Debugging Failed Tests
-```bash
-# Run failed tests first
-./tests/run_tests.py --failed-first --verbose
-
-# Stop on first failure for debugging
-./tests/run_tests.py --stop-on-first-failure -x
-```
-
-## Test Configuration
-
-### Pytest Settings (`pytest.ini`)
-- Test discovery patterns
-- Custom markers
-- Warning filters
-- Output formatting
-
-### Global Fixtures (`conftest.py`)
-- Automatic test marking
-- Global state reset
-- Path configuration
-
-### Performance Settings
-- Limited chunk processing in tests
-- Small batch sizes for speed
-- Mock embeddings for fast execution
-- Temporary storage cleanup
-
-## Coverage
-
-Run with coverage to ensure comprehensive testing:
-
-```bash
-./tests/run_tests.py --coverage
-```
-
-Coverage reports are generated in:
-- Terminal: Summary with missing lines
-- HTML: `htmlcov/index.html` (detailed report)
-
-Target coverage areas:
-- Core chunking logic: >95%
-- Embedding generation: >90%
-- Search functionality: >90%
-- MCP server tools: >85%
-- Error handling paths: >80%
-
-## Continuous Integration
-
-For CI/CD pipelines, use:
-
-```bash
-# Fast, comprehensive test run
-pytest -m "not slow" --cov=claude_embedding_search --cov-fail-under=85
-
-# Full test suite (including slow tests)  
-pytest --cov=claude_embedding_search --cov-fail-under=80
-```
-
-## Adding New Tests
-
-When adding new functionality:
-
-1. **Unit tests**: Test individual functions/classes in isolation
-2. **Integration tests**: Test component interactions
-3. **Fixtures**: Add sample data to `fixtures/` if needed
-4. **Markers**: Use appropriate markers for test categorization
-5. **Documentation**: Update this README with new test scenarios
-
-### Test Naming Convention
-- Test files: `test_<component>.py`
-- Test classes: `Test<ComponentName>`
-- Test methods: `test_<specific_behavior>`
-
-### Example Test Structure
-```python
-class TestNewComponent:
-    """Test cases for NewComponent."""
-    
-    def test_basic_functionality(self, fixture_name):
-        """Test basic operation."""
-        pass
-    
-    def test_error_handling(self):
-        """Test error conditions."""
-        pass
-    
-    def test_edge_cases(self):
-        """Test boundary conditions.""" 
-        pass
-```
+Use an authenticated self-hosted runner for GPU/systemd/real-client release acceptance. Ordinary CI covers the deterministic suite, coverage floors, build/install matrix and portable plugin manifests. Publication is a manually dispatched workflow gated by all acceptance jobs and a protected PyPI environment.

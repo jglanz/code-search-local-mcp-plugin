@@ -1,11 +1,11 @@
 """Unit tests for MerkleDAG class."""
 
-import tempfile
 import shutil
+import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from merkle.merkle_dag import MerkleDAG
+from code_search_local.merkle.merkle_dag import MerkleDAG
 
 
 class TestMerkleDAG(TestCase):
@@ -23,14 +23,14 @@ class TestMerkleDAG(TestCase):
     def create_test_files(self):
         """Create test file structure."""
         # Create directories
-        (self.test_path / 'src').mkdir()
-        (self.test_path / 'tests').mkdir()
+        (self.test_path / "src").mkdir()
+        (self.test_path / "tests").mkdir()
 
         # Create files
-        (self.test_path / 'README.md').write_text('# Test Project')
-        (self.test_path / 'src' / 'main.py').write_text('def main(): pass')
-        (self.test_path / 'src' / 'utils.py').write_text('def helper(): pass')
-        (self.test_path / 'tests' / 'test_main.py').write_text('def test_main(): pass')
+        (self.test_path / "README.md").write_text("# Test Project")
+        (self.test_path / "src" / "main.py").write_text("def main(): pass")
+        (self.test_path / "src" / "utils.py").write_text("def helper(): pass")
+        (self.test_path / "tests" / "test_main.py").write_text("def test_main(): pass")
 
     def test_dag_building(self):
         """Test building a Merkle DAG from directory."""
@@ -48,10 +48,10 @@ class TestMerkleDAG(TestCase):
         assert len(all_files) == 4
 
         # Check specific files
-        assert 'README.md' in all_files
-        assert 'src/main.py' in all_files
-        assert 'src/utils.py' in all_files
-        assert 'tests/test_main.py' in all_files
+        assert "README.md" in all_files
+        assert "src/main.py" in all_files
+        assert "src/utils.py" in all_files
+        assert "tests/test_main.py" in all_files
 
     def test_file_hashing(self):
         """Test file hash calculation."""
@@ -81,7 +81,7 @@ class TestMerkleDAG(TestCase):
         root_hash1 = dag1.get_root_hash()
 
         # Modify a file
-        (self.test_path / 'src' / 'main.py').write_text('def main(): return 1')
+        (self.test_path / "src" / "main.py").write_text("def main(): return 1")
 
         dag2 = MerkleDAG(self.temp_dir)
         dag2.build()
@@ -91,13 +91,13 @@ class TestMerkleDAG(TestCase):
         assert root_hash1 != root_hash2
 
         # Src directory hash should change
-        src_node1 = dag1.find_node('src')
-        src_node2 = dag2.find_node('src')
+        src_node1 = dag1.find_node("src")
+        src_node2 = dag2.find_node("src")
         assert src_node1.hash != src_node2.hash
 
         # Tests directory hash should remain same
-        tests_node1 = dag1.find_node('tests')
-        tests_node2 = dag2.find_node('tests')
+        tests_node1 = dag1.find_node("tests")
+        tests_node2 = dag2.find_node("tests")
         assert tests_node1.hash == tests_node2.hash
 
     def test_ignore_patterns(self):
@@ -105,11 +105,11 @@ class TestMerkleDAG(TestCase):
         self.create_test_files()
 
         # Create files that should be ignored
-        (self.test_path / '.git').mkdir()
-        (self.test_path / '.git' / 'config').write_text('config')
-        (self.test_path / '__pycache__').mkdir()
-        (self.test_path / '__pycache__' / 'cache.pyc').write_text('cache')
-        (self.test_path / 'test.pyc').write_text('pyc')
+        (self.test_path / ".git").mkdir()
+        (self.test_path / ".git" / "config").write_text("config")
+        (self.test_path / "__pycache__").mkdir()
+        (self.test_path / "__pycache__" / "cache.pyc").write_text("cache")
+        (self.test_path / "test.pyc").write_text("pyc")
 
         dag = MerkleDAG(self.temp_dir)
         dag.build()
@@ -117,12 +117,12 @@ class TestMerkleDAG(TestCase):
         all_files = dag.get_all_files()
 
         # Ignored files should not be in DAG
-        assert '.git/config' not in all_files
-        assert '__pycache__/cache.pyc' not in all_files
-        assert 'test.pyc' not in all_files
+        assert ".git/config" not in all_files
+        assert "__pycache__/cache.pyc" not in all_files
+        assert "test.pyc" not in all_files
 
         # Regular files should be present
-        assert 'README.md' in all_files
+        assert "README.md" in all_files
 
     def test_dag_serialization(self):
         """Test DAG to/from dict conversion."""
@@ -135,10 +135,10 @@ class TestMerkleDAG(TestCase):
         data = dag1.to_dict()
 
         # Verify structure
-        assert data['root_path'] == str(self.test_path)
-        assert data['root_node'] is not None
-        assert data['file_count'] == 4
-        assert data['total_size'] > 0
+        assert data["root_path"] == str(self.test_path)
+        assert data["root_node"] is not None
+        assert data["file_count"] == 4
+        assert data["total_size"] > 0
 
         # Deserialize
         dag2 = MerkleDAG.from_dict(data)

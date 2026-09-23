@@ -1,12 +1,12 @@
 """Test suite for metadata extraction richness."""
 
-import tempfile
 import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from chunking.multi_language_chunker import MultiLanguageChunker
+from code_search_local.chunking.multi_language_chunker import MultiLanguageChunker
 
 
 @pytest.mark.integration
@@ -80,8 +80,9 @@ class UserAuthenticator:
             for chunk in chunks:
                 # Check relative path
                 assert chunk.relative_path is not None, "Relative path should be set"
-                assert "auth" in chunk.relative_path or "user_auth" in chunk.relative_path, \
+                assert "auth" in chunk.relative_path or "user_auth" in chunk.relative_path, (
                     "Relative path should include directory structure"
+                )
 
                 # Check folder structure
                 assert isinstance(chunk.folder_structure, list), "Folder structure should be a list"
@@ -123,17 +124,18 @@ class UserAuthenticator:
             for chunk in chunks:
                 if chunk.folder_structure:
                     # Should include some part of the nested path
-                    assert "src" in chunk.folder_structure or \
-                           "components" in chunk.folder_structure or \
-                           "auth" in chunk.folder_structure, \
-                           f"Folder structure should reflect nesting, got {chunk.folder_structure}"
+                    assert (
+                        "src" in chunk.folder_structure
+                        or "components" in chunk.folder_structure
+                        or "auth" in chunk.folder_structure
+                    ), f"Folder structure should reflect nesting, got {chunk.folder_structure}"
 
         finally:
             shutil.rmtree(test_dir)
 
     def test_metadata_imports_extraction(self):
         """Test that imports are extracted in metadata."""
-        test_code = '''
+        test_code = """
 import os
 import sys
 from pathlib import Path
@@ -143,10 +145,11 @@ from collections import defaultdict
 
 def my_function():
     pass
-'''
+"""
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             import os
+
             f.write(test_code)
             f.flush()
 
@@ -158,10 +161,11 @@ def my_function():
 
                 # Check that imports attribute exists and is iterable
                 for chunk in chunks:
-                    assert hasattr(chunk, 'imports'), "Chunks should have imports attribute"
+                    assert hasattr(chunk, "imports"), "Chunks should have imports attribute"
                     # Imports should be a list or None
-                    assert chunk.imports is None or isinstance(chunk.imports, (list, set)), \
+                    assert chunk.imports is None or isinstance(chunk.imports, (list, set)), (
                         "Imports should be None or a list/set"
+                    )
 
             finally:
                 os.unlink(f.name)

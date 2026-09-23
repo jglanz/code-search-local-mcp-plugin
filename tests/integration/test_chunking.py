@@ -1,13 +1,11 @@
 """Test suite for AST-based chunking functionality."""
 
-import tempfile
 import os
-import shutil
-from pathlib import Path
+import tempfile
 
 import pytest
 
-from chunking.multi_language_chunker import MultiLanguageChunker
+from code_search_local.chunking.multi_language_chunker import MultiLanguageChunker
 
 
 @pytest.mark.integration
@@ -92,7 +90,7 @@ def get_user_profile(user_id: int) -> Dict:
     return profiles[0]
 '''
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(test_code)
             f.flush()
 
@@ -108,11 +106,11 @@ def get_user_profile(user_id: int) -> Dict:
                 # Check chunk structure
                 for chunk in chunks:
                     # Validate chunk attributes
-                    assert hasattr(chunk, 'chunk_type'), "Chunk should have chunk_type"
-                    assert hasattr(chunk, 'start_line'), "Chunk should have start_line"
-                    assert hasattr(chunk, 'end_line'), "Chunk should have end_line"
-                    assert hasattr(chunk, 'content'), "Chunk should have content"
-                    assert hasattr(chunk, 'tags'), "Chunk should have tags"
+                    assert hasattr(chunk, "chunk_type"), "Chunk should have chunk_type"
+                    assert hasattr(chunk, "start_line"), "Chunk should have start_line"
+                    assert hasattr(chunk, "end_line"), "Chunk should have end_line"
+                    assert hasattr(chunk, "content"), "Chunk should have content"
+                    assert hasattr(chunk, "tags"), "Chunk should have tags"
 
                     assert chunk.start_line > 0, "Start line should be positive"
                     assert chunk.end_line >= chunk.start_line, "End line should be >= start line"
@@ -138,7 +136,7 @@ def expensive_property(self):
     return compute_something()
 '''
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(test_code)
             f.flush()
 

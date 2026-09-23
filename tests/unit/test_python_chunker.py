@@ -2,7 +2,7 @@
 
 import pytest
 
-from chunking.languages import PythonChunker
+from code_search_local.chunking.languages import PythonChunker
 
 
 @pytest.mark.unit
@@ -40,17 +40,17 @@ class MyClass:
         assert isinstance(chunks, list), "chunk_code should return a list"
 
         # Check function names in metadata
-        func_names = [c.metadata.get('name') for c in chunks if 'name' in c.metadata]
-        has_function = 'simple_function' in func_names or any(
-            'simple_function' in c.content for c in chunks
+        func_names = [c.metadata.get("name") for c in chunks if "name" in c.metadata]
+        has_function = "simple_function" in func_names or any(
+            "simple_function" in c.content for c in chunks
         )
         assert has_function, "Should find simple_function in chunks"
 
         # Check chunk structure
         for chunk in chunks:
-            assert hasattr(chunk, 'content'), "Each chunk should have content"
-            assert hasattr(chunk, 'metadata'), "Each chunk should have metadata"
-            assert hasattr(chunk, 'node_type'), "Each chunk should have node_type"
+            assert hasattr(chunk, "content"), "Each chunk should have content"
+            assert hasattr(chunk, "metadata"), "Each chunk should have metadata"
+            assert hasattr(chunk, "node_type"), "Each chunk should have node_type"
             assert isinstance(chunk.content, str), "Chunk content should be a string"
 
     def test_class_chunking(self):
@@ -77,13 +77,13 @@ class DataClass:
 
         # Check for class in node types
         class_chunks = [
-            c for c in chunks if 'class' in c.node_type or c.node_type == 'decorated_definition'
+            c for c in chunks if "class" in c.node_type or c.node_type == "decorated_definition"
         ]
         assert len(class_chunks) > 0, "Should find class chunks"
 
     def test_decorated_definition(self):
         """Test chunking of decorated definitions."""
-        code = '''
+        code = """
 @decorator1
 @decorator2
 def decorated_function():
@@ -92,27 +92,25 @@ def decorated_function():
 @property
 def my_property(self):
     return self._value
-'''
+"""
         chunks = self.chunker.chunk_code(code)
 
         # Should find decorated definitions
         assert len(chunks) >= 1, "Should find at least one chunk"
 
         # Check for decorators in metadata or content
-        has_decorator = any(
-            'decorator' in str(c.metadata) or '@' in c.content for c in chunks
-        )
+        has_decorator = any("decorator" in str(c.metadata) or "@" in c.content for c in chunks)
         assert has_decorator, "Should find decorators in chunks"
 
     def test_empty_file(self):
         """Test chunking of empty file."""
-        code = ''
+        code = ""
         chunks = self.chunker.chunk_code(code)
         assert len(chunks) == 0, "Empty file should produce no chunks"
 
     def test_module_only(self):
         """Test file with only module-level code."""
-        code = '''
+        code = """
 import os
 import sys
 
@@ -120,9 +118,9 @@ CONSTANT = 42
 variable = "test"
 
 print("Module level code")
-'''
+"""
         chunks = self.chunker.chunk_code(code)
 
         # Should create a module chunk since no functions/classes
         assert len(chunks) == 1, "Module-only file should produce one chunk"
-        assert chunks[0].node_type == 'module', "Chunk should be of type module"
+        assert chunks[0].node_type == "module", "Chunk should be of type module"

@@ -1,13 +1,13 @@
 """Unit tests for ChangeDetector class."""
 
-import tempfile
 import shutil
+import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from merkle.merkle_dag import MerkleDAG
-from merkle.snapshot_manager import SnapshotManager
-from merkle.change_detector import ChangeDetector, FileChanges
+from code_search_local.merkle.change_detector import ChangeDetector, FileChanges
+from code_search_local.merkle.merkle_dag import MerkleDAG
+from code_search_local.merkle.snapshot_manager import SnapshotManager
 
 
 class TestChangeDetector(TestCase):
@@ -18,7 +18,7 @@ class TestChangeDetector(TestCase):
         self.temp_dir = tempfile.mkdtemp()
         self.test_path = Path(self.temp_dir)
 
-        self.storage_dir = Path(self.temp_dir) / 'snapshots'
+        self.storage_dir = Path(self.temp_dir) / "snapshots"
         self.snapshot_manager = SnapshotManager(self.storage_dir)
         self.detector = ChangeDetector(self.snapshot_manager)
 
@@ -30,11 +30,11 @@ class TestChangeDetector(TestCase):
 
     def create_initial_files(self):
         """Create initial file structure."""
-        (self.test_path / 'src').mkdir()
-        (self.test_path / 'unchanged.py').write_text('# unchanged')
-        (self.test_path / 'to_modify.py').write_text('# original')
-        (self.test_path / 'to_remove.py').write_text('# remove me')
-        (self.test_path / 'src' / 'module.py').write_text('# module')
+        (self.test_path / "src").mkdir()
+        (self.test_path / "unchanged.py").write_text("# unchanged")
+        (self.test_path / "to_modify.py").write_text("# original")
+        (self.test_path / "to_remove.py").write_text("# remove me")
+        (self.test_path / "src" / "module.py").write_text("# module")
 
     def test_detect_changes_between_dags(self):
         """Test detecting changes between two DAGs."""
@@ -43,9 +43,9 @@ class TestChangeDetector(TestCase):
         dag1.build()
 
         # Modify files
-        (self.test_path / 'to_modify.py').write_text('# modified')
-        (self.test_path / 'to_remove.py').unlink()
-        (self.test_path / 'added.py').write_text('# new file')
+        (self.test_path / "to_modify.py").write_text("# modified")
+        (self.test_path / "to_remove.py").unlink()
+        (self.test_path / "added.py").write_text("# new file")
 
         # Create new DAG
         dag2 = MerkleDAG(str(self.test_path))
@@ -54,11 +54,11 @@ class TestChangeDetector(TestCase):
         # Detect changes
         changes = self.detector.detect_changes(dag1, dag2)
 
-        assert 'added.py' in changes.added
-        assert 'to_remove.py' in changes.removed
-        assert 'to_modify.py' in changes.modified
-        assert 'unchanged.py' in changes.unchanged
-        assert 'src/module.py' in changes.unchanged
+        assert "added.py" in changes.added
+        assert "to_remove.py" in changes.removed
+        assert "to_modify.py" in changes.modified
+        assert "unchanged.py" in changes.unchanged
+        assert "src/module.py" in changes.unchanged
 
         assert changes.has_changes()
         assert changes.total_changed() == 3
@@ -71,14 +71,14 @@ class TestChangeDetector(TestCase):
         self.snapshot_manager.save_snapshot(dag1)
 
         # Modify files
-        (self.test_path / 'to_modify.py').write_text('# modified content')
-        (self.test_path / 'new_file.py').write_text('# new')
+        (self.test_path / "to_modify.py").write_text("# modified content")
+        (self.test_path / "new_file.py").write_text("# new")
 
         # Detect changes from snapshot
         changes, current_dag = self.detector.detect_changes_from_snapshot(str(self.test_path))
 
-        assert 'new_file.py' in changes.added
-        assert 'to_modify.py' in changes.modified
+        assert "new_file.py" in changes.added
+        assert "to_modify.py" in changes.modified
         assert len(changes.removed) == 0
         assert changes.has_changes()
 
@@ -103,7 +103,7 @@ class TestChangeDetector(TestCase):
 
         # Save snapshot - excluding snapshots directory
         dag = MerkleDAG(str(self.test_path))
-        dag.ignore_patterns.add('snapshots')  # Ignore the snapshots directory
+        dag.ignore_patterns.add("snapshots")  # Ignore the snapshots directory
         dag.build()
         self.snapshot_manager.save_snapshot(dag)
 
@@ -111,7 +111,7 @@ class TestChangeDetector(TestCase):
         assert not self.detector.quick_check(str(self.test_path))
 
         # Make a change
-        (self.test_path / 'to_modify.py').write_text('# changed')
+        (self.test_path / "to_modify.py").write_text("# changed")
 
         # Should detect change
         assert self.detector.quick_check(str(self.test_path))
@@ -119,32 +119,29 @@ class TestChangeDetector(TestCase):
     def test_files_to_reindex(self):
         """Test getting files that need reindexing."""
         changes = FileChanges(
-            added=['new1.py', 'new2.py'],
-            removed=['old.py'],
-            modified=['changed.py'],
-            unchanged=['same.py']
+            added=["new1.py", "new2.py"],
+            removed=["old.py"],
+            modified=["changed.py"],
+            unchanged=["same.py"],
         )
 
         files_to_reindex = self.detector.get_files_to_reindex(changes)
 
         assert len(files_to_reindex) == 3
-        assert 'new1.py' in files_to_reindex
-        assert 'new2.py' in files_to_reindex
-        assert 'changed.py' in files_to_reindex
-        assert 'old.py' not in files_to_reindex
+        assert "new1.py" in files_to_reindex
+        assert "new2.py" in files_to_reindex
+        assert "changed.py" in files_to_reindex
+        assert "old.py" not in files_to_reindex
 
     def test_files_to_remove(self):
         """Test getting files to remove from index."""
         changes = FileChanges(
-            added=['new.py'],
-            removed=['deleted.py'],
-            modified=['changed.py'],
-            unchanged=['same.py']
+            added=["new.py"], removed=["deleted.py"], modified=["changed.py"], unchanged=["same.py"]
         )
 
         files_to_remove = self.detector.get_files_to_remove(changes)
 
         assert len(files_to_remove) == 2
-        assert 'deleted.py' in files_to_remove
-        assert 'changed.py' in files_to_remove  # Modified files need old chunks removed
-        assert 'new.py' not in files_to_remove
+        assert "deleted.py" in files_to_remove
+        assert "changed.py" in files_to_remove  # Modified files need old chunks removed
+        assert "new.py" not in files_to_remove

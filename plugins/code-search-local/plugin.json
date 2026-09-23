@@ -1,0 +1,26 @@
+{
+  "name": "code-search-local",
+  "version": "0.2.0",
+  "description": "Shared local semantic code search with CPU, CUDA and ROCm support.",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Code Search Local",
+        "shortDescription": "Use Code Search Local in Codex.",
+        "longDescription": "Index and search multiple workspaces with a shared local model service. Run the setup skill once to install the user service and MCP connection.",
+        "developerName": "Code Search Local contributors",
+        "category": "Productivity",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "defaultPrompt": "Set up Code Search Local for this computer."
+      }
+    }
+  },
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "author": {
+    "name": "Code Search Local contributors"
+  },
+  "license": "GPL-3.0-only"
+}

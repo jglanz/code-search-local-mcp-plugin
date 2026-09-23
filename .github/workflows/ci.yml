@@ -1,0 +1,42 @@
+name: Tests and distributions
+on:
+  push:
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Bootstrap declared installer
+        run: |
+          python -m venv .venv-bootstrap
+          .venv-bootstrap/bin/python -m pip install .
+          .venv-bootstrap/bin/uv sync --locked --extra server --extra cpu
+      - name: Static checks and separate coverage floors
+        run: |
+          .venv/bin/ruff check src scripts tests --select F,I
+          .venv/bin/pytest --cov --cov-report=json:coverage.json --cov-report=xml
+          .venv/bin/python scripts/check_coverage.py
+      - name: Build and test all installers
+        env:
+          CODE_SEARCH_PACKAGING: '1'
+        run: |
+          .venv/bin/python -m build
+          .venv/bin/pytest tests/integration/test_packaging.py
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: distributions
+          path: dist/*
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage.json
+            coverage.xml

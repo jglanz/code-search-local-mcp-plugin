@@ -27,6 +27,7 @@ sdist/
 var/
 wheels/
 share/python-wheels/
+logs/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -104,7 +105,7 @@ ipython_config.py
 #   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
-uv.lock
+# uv.lock is committed for reproducible installations.
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
@@ -223,3 +224,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Preserve local orchestration state outside version control.
+/.omc/
+/.venv-*/
+/.test-artifacts/
+
+# Build-generated resources; canonical sources are pyproject.toml, uv.lock and plugins/.
+/src/code_search_local/runtime/
+/src/code_search_local/assets/
+/coverage.json
+/coverage/
+/reports/
+# Local runtime databases, vectors and caches.
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.faiss
+*.index
+/.code-search-local/

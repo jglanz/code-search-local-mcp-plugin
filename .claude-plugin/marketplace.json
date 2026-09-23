@@ -1,0 +1,17 @@
+{
+  "name": "code-search-local",
+  "owner": {
+    "name": "Code Search Local contributors"
+  },
+  "plugins": [
+    {
+      "name": "code-search-local",
+      "source": "./plugins/code-search-local",
+      "version": "0.2.0",
+      "description": "Shared local semantic code search with CPU, CUDA and ROCm support."
+    }
+  ],
+  "metadata": {
+    "description": "Shared local code search for Claude Code and Codex."
+  }
+}
