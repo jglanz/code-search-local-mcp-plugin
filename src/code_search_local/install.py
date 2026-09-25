@@ -7,14 +7,15 @@ import platform
 import shutil
 import subprocess
 import time
+import tomllib
 from dataclasses import asdict, replace
-from importlib.resources import files
+from importlib.metadata import distribution
 from pathlib import Path
 
 from . import __version__
 from .config import config_path
 from .service import token_for
-from .storage import ServiceLock, atomic_json
+from .storage import ServiceLock, atomic_json, atomic_text
 
 SERVICE = "code-search-local.service"
 
@@ -51,24 +52,85 @@ def unit_path():
     return base / "systemd" / "user" / SERVICE
 
 
-def systemd_quote(value):
-    # ExecStart is parsed by systemd, not a shell. Escape specifiers and dollar expansion.
-    return (
-        '"'
-        + str(value).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$")
-        + '"'
+def systemd_quote(value, *, expand_dollars=True):
+    # Only ExecStart expands dollars; directives such as WorkingDirectory do not.
+    value = str(value).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    if expand_dollars:
+        value = value.replace("$", "$$")
+    return '"' + value + '"'
+
+
+def installer_environment():
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV", "PYTHONPATH")
+    }
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
+def source_checkout(path):
+    root = Path(path).expanduser().resolve()
+    if "\n" in str(root) or "\r" in str(root):
+        raise ValueError("Source checkout paths cannot contain line breaks")
+    try:
+        metadata = tomllib.loads((root / "pyproject.toml").read_text())
+        valid = (
+            metadata.get("project", {}).get("name") == "code-search-local"
+            and (root / "src/code_search_local/__init__.py").is_file()
+            and (root / "uv.lock").is_file()
+        )
+    except (OSError, ValueError):
+        valid = False
+    if not valid:
+        raise ValueError(f"Not a Code Search Local source checkout: {root}")
+    return root
+
+
+def install_source_runtime(source, backend):
+    """Sync the live checkout using the backend environment declared in pyproject."""
+    metadata = tomllib.loads((source / "pyproject.toml").read_text())
+    try:
+        environments = metadata["tool"]["hatch"]["envs"]
+        relative = environments[backend].get("path", environments["default"]["path"])
+    except KeyError:
+        raise ValueError(f"Checkout lacks the Hatch {backend} environment configuration") from None
+    venv = source / relative
+    env = installer_environment()
+    env["UV_PROJECT_ENVIRONMENT"] = str(venv)
+    run(
+        [
+            uv_executable(),
+            "sync",
+            "--project",
+            source,
+            "--locked",
+            "--extra",
+            "server",
+            "--extra",
+            backend,
+            "--python",
+            "3.12",
+            "--reinstall-package",
+            "code-search-local",
+        ],
+        env=env,
     )
+    return venv / "bin/python"
 
 
 def runtime_identity(package_source=None):
-    identity = hashlib.sha256((files("code_search_local") / "runtime" / "uv.lock").read_bytes())
+    resources = distribution("code-search-local").locate_file("code_search_local/runtime")
+    identity = hashlib.sha256((resources / "uv.lock").read_bytes())
     if package_source:
         identity.update(Path(package_source).read_bytes())
     return f"{__version__}-{identity.hexdigest()[:12]}"
 
 
 def install_runtime(settings, backend, package_source=None):
-    resources = files("code_search_local") / "runtime"
+    # Hatch installs forced-included resources in site-packages, including for editable installs.
+    resources = distribution("code-search-local").locate_file("code_search_local/runtime")
     identity = runtime_identity(package_source)
     root = settings.root / "runtimes" / f"{__version__}-{backend}-{identity.split('-')[-1]}"
     python = root / ".venv" / "bin" / "python"
@@ -79,12 +141,7 @@ def install_runtime(settings, backend, package_source=None):
         (root / name).write_bytes((resources / name).read_bytes())
     (root / "README.md").write_text("Managed code-search-local runtime.\n")
     uv = uv_executable()
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in ("UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV", "PYTHONPATH")
-    }
-    env["PYTHONNOUSERSITE"] = "1"
+    env = installer_environment()
     run(
         [
             uv,
@@ -113,96 +170,62 @@ def install_runtime(settings, backend, package_source=None):
     return python
 
 
-def register_clients(settings, client):
-    token = token_for(settings.root)
-    endpoint = settings.url + "/mcp"
-    if client in ("claude", "both"):
-        if not shutil.which("claude"):
-            raise RuntimeError(
-                "Claude CLI is not installed; install it and rerun setup --client claude"
-            )
-        # Let Claude own its schema, but keep a private rollback copy across remove/add.
-        config = (
-            Path(os.environ["CLAUDE_CONFIG_DIR"]) / ".claude.json"
-            if os.environ.get("CLAUDE_CONFIG_DIR")
-            else Path.home() / ".claude.json"
+def register_clients(settings, selected, *, marketplace=False):
+    from .harnesses import register, selection, targets
+
+    if isinstance(selected, str):
+        selected = ("claude", "codex") if selected == "both" else (selected,)
+    register(settings, targets(selection(selected)), marketplace=marketplace)
+
+
+def setup(
+    settings, *, agent_harness=(), client=None, package_source=None, source=None, marketplace=False
+):
+    from .harnesses import plugins, read_document, selection, targets
+    from .lifecycle import marketplace_entries
+
+    if client is not None:
+        if agent_harness:
+            raise ValueError("--client cannot be combined with --agent-harness")
+        agent_harness = ("claude", "codex") if client == "both" else (client,)
+    agent_harness = selection(agent_harness)
+    selected = targets(agent_harness)
+    for target in selected:
+        for path in target["configs"]:
+            read_document(path)
+        plugins(target)
+    entries = marketplace_entries(selected) if marketplace else []
+    if source is not None:
+        if package_source is not None:
+            raise ValueError("--source cannot be used with --package-source")
+        source = source_checkout(source)
+    lock = ServiceLock(config_path().parent, "install.lock")
+    try:
+        return _setup(
+            settings,
+            agent_harness=agent_harness,
+            selected=selected,
+            entries=entries,
+            package_source=package_source,
+            source=source,
+            marketplace=marketplace,
         )
-        previous = config.read_text() if config.exists() else None
-        if previous is not None:
-            atomic_text(config.with_name(config.name + ".code-search-local.bak"), previous)
-        try:
-            subprocess.run(
-                ["claude", "mcp", "remove", "code-search-local", "--scope", "user"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            run(
-                [
-                    "claude",
-                    "mcp",
-                    "add",
-                    "--scope",
-                    "user",
-                    "--transport",
-                    "http",
-                    "code-search-local",
-                    endpoint,
-                    "--header",
-                    f"Authorization: Bearer {token}",
-                ],
-                stdout=subprocess.DEVNULL,
-            )
-        except (OSError, subprocess.CalledProcessError):
-            if previous is not None:
-                atomic_text(config, previous)
-            raise
-    if client in ("codex", "both"):
-        import tomlkit
-
-        path = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "config.toml"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        text = path.read_text() if path.exists() else ""
-        document = tomlkit.parse(text)
-        servers = document.setdefault("mcp_servers", tomlkit.table())
-        servers["code-search-local"] = {
-            "url": endpoint,
-            "http_headers": {"Authorization": f"Bearer {token}"},
-        }
-        if path.exists():
-            backup = path.with_suffix(".toml.code-search-local.bak")
-            backup.write_text(text)
-            backup.chmod(0o600)
-        atomic_text(path, tomlkit.dumps(document))
-
-
-def atomic_text(path, content):
-    import tempfile
-
-    from .storage import sync_dir
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix=".code-search-local-")
-    try:
-        with os.fdopen(fd, "w") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(name, path)
-        sync_dir(path.parent)
-    finally:
-        Path(name).unlink(missing_ok=True)
-
-
-def setup(settings, *, client, package_source=None):
-    lock = ServiceLock(settings.root, "setup.lock")
-    try:
-        return _setup(settings, client=client, package_source=package_source)
     finally:
         lock.close()
 
 
-def _setup(settings, *, client, package_source=None):
+def _setup(
+    settings,
+    *,
+    agent_harness,
+    selected,
+    entries,
+    package_source=None,
+    source=None,
+    marketplace=False,
+):
+    from .lifecycle import record_installation, remove_guard
+
     if platform.system() != "Linux":
         raise RuntimeError(
             "User systemd setup currently requires Linux; use serve on other platforms"
@@ -218,14 +241,34 @@ def _setup(settings, *, client, package_source=None):
         if preferred != "cpu" and settings.allow_fallback:
             candidates.append("cpu")
     choice_path = settings.root / "runtime-choice.json"
-    identity = runtime_identity(package_source)
+    identity = (
+        "source:"
+        + str(source)
+        + ":"
+        + hashlib.sha256(
+            (source / "pyproject.toml").read_bytes() + (source / "uv.lock").read_bytes()
+        ).hexdigest()
+        if source is not None
+        else runtime_identity(package_source)
+    )
     saved_choice = json.loads(choice_path.read_text()) if choice_path.exists() else {}
     backend = preferred
     if saved_choice.get("identity") == identity and saved_choice.get("settings") == asdict(
         settings
     ):
         backend = saved_choice["backend"]
-    python = install_runtime(settings, backend, package_source)
+    runtimes = {}
+
+    def runtime_for(selected):
+        if selected not in runtimes:
+            runtimes[selected] = (
+                install_source_runtime(source, selected)
+                if source is not None
+                else install_runtime(settings, selected, package_source)
+            )
+        return runtimes[selected]
+
+    python = runtime_for(backend)
     token_for(settings.root, create=True)
     path = unit_path()
     command = " ".join(
@@ -235,7 +278,13 @@ def _setup(settings, *, client, package_source=None):
     unit = (
         "[Unit]\nDescription=Code Search Local shared model service\nAfter=network.target\n\n"
         "[Service]\nType=simple\n" + f"ExecStart={command}\n"
-        f"Environment={systemd_quote('XDG_CONFIG_HOME=' + str(config_path().parent.parent))}\n"
+        f"Environment={systemd_quote('XDG_CONFIG_HOME=' + str(config_path().parent.parent), expand_dollars=False)}\n"
+        + (
+            # WorkingDirectory takes one literal path, not an ExecStart-style quoted argument.
+            # A trailing slash preserves any trailing whitespace/backslash in the directory name.
+            f"WorkingDirectory={str(source).replace('%', '%%')}/\n" if source is not None else ""
+        )
+        + "Environment=PYTHONNOUSERSITE=1\n"
         "Restart=on-failure\nRestartSec=3\nTimeoutStopSec=120\nUMask=0077\n\n"
         "[Install]\nWantedBy=default.target\n"
     )
@@ -248,8 +297,12 @@ def _setup(settings, *, client, package_source=None):
         "backend": backend,
         "service": str(path),
         "url": settings.url + "/mcp",
+        "mode": "source" if source is not None else "package",
+        "source": str(source) if source is not None else None,
+        "agent_harness": list(agent_harness),
+        "installation_origin": "marketplace" if marketplace else "cli",
     }
-    if path.exists() and path.read_text() == unit and config_path().exists():
+    if source is None and path.exists() and path.read_text() == unit and config_path().exists():
         saved = json.loads(config_path().read_text())
         if saved == asdict(settings):
             try:
@@ -257,13 +310,15 @@ def _setup(settings, *, client, package_source=None):
             except (OSError, RuntimeError):
                 pass
             else:
-                register_clients(settings, client)
+                remove_guard(path)
+                register_clients(settings, agent_harness, marketplace=marketplace)
+                record_installation(result, selected, entries, python)
                 return result
     # Validate actual model inference inside the selected environment before replacing a running service.
     candidate = settings.root / "runtime-candidate.json"
     original_python = python
     for candidate_backend in candidates:
-        python = install_runtime(settings, candidate_backend, package_source)
+        python = runtime_for(candidate_backend)
         validation = (
             replace(settings, backend=candidate_backend, cpu_fallback=False)
             if settings.backend == "auto"
@@ -280,7 +335,8 @@ def _setup(settings, *, client, package_source=None):
                     "--settings-file",
                     candidate,
                     "--inference",
-                ]
+                ],
+                **({"cwd": source, "env": installer_environment()} if source is not None else {}),
             )
         except subprocess.CalledProcessError:
             if candidate_backend == candidates[-1]:
@@ -309,14 +365,16 @@ def _setup(settings, *, client, package_source=None):
     atomic_json(
         choice_path, {"identity": identity, "settings": asdict(settings), "backend": backend}
     )
-    register_clients(settings, client)
+    remove_guard(path)
+    register_clients(settings, agent_harness, marketplace=marketplace)
+    record_installation(result, selected, entries, python)
     return result
 
 
 def service_action(action):
     if action == "uninstall":
-        run(["systemctl", "--user", "disable", "--now", SERVICE])
-        unit_path().unlink(missing_ok=True)
-        run(["systemctl", "--user", "daemon-reload"])
+        from .lifecycle import uninstall
+
+        return uninstall()
     else:
         run(["systemctl", "--user", action, SERVICE])

@@ -276,7 +276,6 @@ class Engine:
         store = self._store(project)
         previous = store.read()
         dag = MerkleDAG(project, self.settings.max_file_bytes)
-        dag.ignore_patterns.add(".omc")
         dag.build()
         all_files = dag.get_file_hashes()
         patterns = job["file_patterns"]

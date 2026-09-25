@@ -20,6 +20,8 @@ from code_search_local.service import token_for
 
 
 def test_runtime_install_uses_bundled_lock_and_persistent_interpreter(tmp_path, monkeypatch):
+    from importlib.metadata import distribution
+
     from code_search_local import install
 
     commands = []
@@ -31,6 +33,9 @@ def test_runtime_install_uses_bundled_lock_and_persistent_interpreter(tmp_path, 
     python = install_runtime(settings, "rocm", str(wheel))
     assert python.is_relative_to(settings.root / "runtimes")
     assert (python.parent.parent.parent / "uv.lock").exists()
+    resources = distribution("code-search-local").locate_file("code_search_local/runtime")
+    for name in ("pyproject.toml", "uv.lock"):
+        assert (python.parent.parent.parent / name).read_bytes() == (resources / name).read_bytes()
     assert "--locked" in commands[0] and "--no-install-project" in commands[0]
     assert commands[0][-1] == "3.12"
     assert commands[1][-1] == str(wheel)
@@ -59,20 +64,20 @@ def test_codex_registration_preserves_settings_and_is_idempotent(tmp_path):
     assert config.stat().st_mode & 0o777 == 0o600
 
 
-def test_claude_registration_uses_native_user_scope(tmp_path, monkeypatch):
-    from code_search_local import install
+def test_claude_registration_uses_user_configuration(tmp_path):
+    import json
 
     settings = Settings(storage=str(tmp_path / "state"))
-    token_for(settings.root, create=True)
-    calls = []
-    monkeypatch.setattr(install.shutil, "which", lambda name: "/bin/claude")
-    monkeypatch.setattr(install.subprocess, "run", lambda args, **kwargs: calls.append(args))
+    token = token_for(settings.root, create=True)
     register_clients(settings, "claude")
-    assert calls[0][:4] == ["claude", "mcp", "remove", "code-search-local"]
-    assert calls[1][2] == "add" and "user" in calls[1] and "http" in calls[1]
-    monkeypatch.setattr(install.shutil, "which", lambda name: None)
-    with pytest.raises(RuntimeError, match="not installed"):
-        register_clients(settings, "claude")
+    config = tmp_path / "claude/.claude.json"
+    entry = json.loads(config.read_text())["mcpServers"]["code-search-local"]
+    assert entry == {
+        "type": "http",
+        "url": settings.url + "/mcp",
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
+    assert config.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize(
@@ -108,14 +113,16 @@ def test_setup_validates_before_replacing_service_and_registers(tmp_path, monkey
     monkeypatch.setattr(install, "install_runtime", lambda *a, **k: python)
     monkeypatch.setattr(install, "run", lambda args, **kwargs: calls.append(args))
     monkeypatch.setattr(
-        install, "register_clients", lambda settings, client: calls.append(["register", client])
+        install,
+        "register_clients",
+        lambda settings, client, **kwargs: calls.append(["register", client]),
     )
     monkeypatch.setattr(Client, "request", AsyncMock(return_value={"status": "ok"}))
     settings = Settings(storage=str(tmp_path / "state"), backend="cpu")
     result = setup(settings, client="both")
     assert result["backend"] == "cpu"
     assert calls[0][3] == "doctor"
-    assert calls[-1] == ["register", "both"]
+    assert ["register", ("codex", "claude")] in calls
     unit = unit_path().read_text()
     assert str(python) in unit and "uvx" not in unit
     assert "UMask=0077" in unit and "WantedBy=default.target" in unit
@@ -148,7 +155,7 @@ def test_setup_and_service_cli_errors(monkeypatch):
 
     monkeypatch.setattr(install, "setup", fail)
     assert runner.invoke(main, ["setup", "--client", "codex"]).exit_code == 1
-    monkeypatch.setattr(install, "service_action", lambda *a: None)
+    monkeypatch.setattr(install, "service_action", lambda *a, **kwargs: None)
     for action in ("start", "stop", "restart", "status", "uninstall"):
         assert runner.invoke(main, ["service", action]).exit_code == 0
 
@@ -170,39 +177,38 @@ def test_repeated_setup_reuses_running_service(tmp_path, monkeypatch):
     monkeypatch.setattr(install, "run", lambda args, **kwargs: commands.append(args))
     registrations = []
     monkeypatch.setattr(
-        install, "register_clients", lambda settings, client: registrations.append(client)
+        install, "register_clients", lambda settings, client, **kwargs: registrations.append(client)
     )
     monkeypatch.setattr(Client, "request", AsyncMock(return_value={"status": "ok"}))
     settings = Settings(storage=str(tmp_path / "state"), backend="cpu")
     first = setup(settings, client="claude")
     count = len(commands)
-    assert setup(settings, client="codex") == first
-    assert len(commands) == count
-    assert registrations == ["claude", "codex"]
+    assert setup(settings, client="codex") == {**first, "agent_harness": ["codex"]}
+    assert commands[count:] == [["systemctl", "--user", "daemon-reload"]]
+    assert registrations == [("claude",), ("codex",)]
 
 
 def test_failed_claude_registration_restores_previous_configuration(tmp_path, monkeypatch):
     import os
-    import subprocess
     from pathlib import Path
 
-    from code_search_local import install
+    from code_search_local import harnesses
 
     config = Path(os.environ["CLAUDE_CONFIG_DIR"]) / ".claude.json"
     config.parent.mkdir()
-    previous = '{"unrelated": true, "mcpServers": {"other": {"url": "http://other"}}}'
+    previous = '{"unrelated": true, "mcpServers": {"code-search-local": {"command": "old"}}}'
     config.write_text(previous)
     settings = Settings(storage=str(tmp_path / "state"))
     token_for(settings.root, create=True)
-    monkeypatch.setattr(install.shutil, "which", lambda name: "/bin/claude")
-    monkeypatch.setattr(install.subprocess, "run", lambda *a, **k: None)
+    save = harnesses.save_document
 
-    def fail(args, **kwargs):
-        config.write_text("{}")
-        raise subprocess.CalledProcessError(1, ["claude"])
+    def fail(path, doc, **kwargs):
+        if "code-search-local" in doc.get("mcpServers", {}):
+            raise OSError("full disk")
+        save(path, doc, **kwargs)
 
-    monkeypatch.setattr(install, "run", fail)
-    with pytest.raises(subprocess.CalledProcessError):
+    monkeypatch.setattr(harnesses, "save_document", fail)
+    with pytest.raises(OSError, match="full disk"):
         register_clients(settings, "claude")
     assert config.read_text() == previous
     assert config.with_name(".claude.json.code-search-local.bak").read_text() == previous
@@ -230,7 +236,7 @@ def test_auto_tries_available_backends_and_reuses_selected_runtime(
         "install_runtime",
         lambda settings, backend, source: tmp_path / backend / "bin/python",
     )
-    monkeypatch.setattr(install, "register_clients", lambda *args: None)
+    monkeypatch.setattr(install, "register_clients", lambda *args, **kwargs: None)
     monkeypatch.setattr(Client, "request", AsyncMock(return_value={"status": "ok"}))
     validation = []
 
@@ -249,7 +255,7 @@ def test_auto_tries_available_backends_and_reuses_selected_runtime(
     sequence = ["cuda", "rocm"] + (["cpu"] if expected == "cpu" else [])
     assert validation == sequence
     assert str(tmp_path / expected / "bin/python") in unit_path().read_text()
-    assert setup(settings, client="codex") == first
+    assert setup(settings, client="codex") == {**first, "agent_harness": ["codex"]}
     assert validation == sequence, "A second client must reuse the healthy selected runtime"
 
 
@@ -276,3 +282,94 @@ def test_failed_backend_validation_preserves_running_service_configuration(tmp_p
         setup(Settings(storage=old.storage, backend="cuda"), client="both")
     assert config_path().read_bytes() == before
     assert unit_path().read_text() == "existing unit"
+
+
+@pytest.mark.parametrize("backend", ["cpu", "cuda", "rocm"])
+def test_source_runtime_uses_declared_environment_and_editable_sync(tmp_path, monkeypatch, backend):
+    import os
+    from pathlib import Path
+
+    from code_search_local import install
+    from tests.helpers import copy_source_checkout
+
+    source = copy_source_checkout(tmp_path / "source with spaces")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/wrong/environment")
+    monkeypatch.setenv("VIRTUAL_ENV", "/wrong/active")
+    monkeypatch.setenv("PYTHONPATH", "/wrong/source")
+    calls = []
+    monkeypatch.setattr(install, "run", lambda args, **kw: calls.append((args, kw)))
+    python = install.install_source_runtime(install.source_checkout(source), backend)
+    assert python == source / ".venvs" / backend / "bin/python"
+    args, kwargs = calls[0]
+    assert args[1:4] == ["sync", "--project", source]
+    assert "--locked" in args and "--reinstall-package" in args
+    assert "--no-install-project" not in args and "--no-editable" not in args
+    assert Path(kwargs["env"]["UV_PROJECT_ENVIRONMENT"]) == python.parent.parent
+    assert "VIRTUAL_ENV" not in kwargs["env"] and "PYTHONPATH" not in kwargs["env"]
+    assert os.environ["UV_PROJECT_ENVIRONMENT"] == "/wrong/environment"
+
+
+def test_source_setup_points_service_at_checkout_and_restarts_after_edits(tmp_path, monkeypatch):
+    from code_search_local import install
+    from code_search_local.client import Client
+    from tests.helpers import copy_source_checkout
+
+    source = copy_source_checkout(tmp_path / "source with $dollars %specifiers")
+    python = source / ".venvs/rocm/bin/python"
+    calls = []
+    installs = []
+    monkeypatch.setattr(install.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        install,
+        "install_source_runtime",
+        lambda root, backend: installs.append((root, backend)) or python,
+    )
+    monkeypatch.setattr(install, "run", lambda args, **kw: calls.append((args, kw)))
+    monkeypatch.setattr(install, "register_clients", lambda *a, **kwargs: None)
+    monkeypatch.setattr(Client, "request", AsyncMock(return_value={"status": "ok"}))
+    settings = Settings(storage=str(tmp_path / "state"), backend="rocm")
+    result = setup(settings, client="both", source=source)
+    assert result["mode"] == "source" and result["source"] == str(source)
+    assert result["runtime"] == str(python.parent.parent)
+    unit = unit_path().read_text()
+    assert f"ExecStart={systemd_quote(python)}" in unit
+    assert f"WorkingDirectory={str(source).replace('%', '%%')}/" in unit
+    assert calls[0][0][3] == "doctor" and calls[0][1]["cwd"] == source
+    assert installs == [(source, "rocm")], "Sync each candidate once per setup"
+    assert not (settings.root / "runtimes").exists()
+    calls.clear()
+    setup(settings, client="codex", source=source)
+    assert any(args[:3] == ["systemctl", "--user", "restart"] for args, _ in calls)
+
+
+def test_source_setup_rejects_non_checkouts_and_package_combination(tmp_path):
+    from code_search_local import install
+
+    settings = Settings(storage=str(tmp_path / "state"))
+    with pytest.raises(ValueError, match="line breaks"):
+        install.source_checkout(tmp_path / "bad\npath")
+    with pytest.raises(ValueError, match="cannot be used"):
+        setup(settings, client="codex", source=tmp_path, package_source="release.whl")
+    for contents in (None, "invalid toml", '[project]\nname="another-project"\n'):
+        if contents is not None:
+            (tmp_path / "pyproject.toml").write_text(contents)
+        with pytest.raises(ValueError, match="Not a Code Search Local source checkout"):
+            install.source_checkout(tmp_path)
+    wheel = tmp_path / "release.whl"
+    wheel.touch()
+    result = CliRunner().invoke(
+        main,
+        [
+            "setup",
+            "--client",
+            "codex",
+            "--source",
+            str(tmp_path),
+            "--package-source",
+            str(wheel),
+        ],
+    )
+    assert result.exit_code == 2 and "cannot be used" in result.output
+    (tmp_path / "pyproject.toml").write_text('[project]\nname="code-search-local"\n')
+    with pytest.raises(ValueError, match="Hatch rocm environment"):
+        install.install_source_runtime(tmp_path, "rocm")

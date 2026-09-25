@@ -1,11 +1,52 @@
 """Shared process helpers for integration tests; no imports from collected test modules."""
 
 import asyncio
+import shutil
 import socket
 import time
 from pathlib import Path
 
 import pytest
+
+SYSTEMD_DRIVER = """
+from pathlib import Path
+import sys
+from code_search_local import install
+from code_search_local.cli import main
+install.SERVICE = sys.argv[1]
+install.unit_path = lambda: Path.home() / ".config/systemd/user" / install.SERVICE
+main(args=sys.argv[2:], standalone_mode=False)
+"""
+
+
+def copy_source_checkout(destination):
+    """Copy live source inputs directly, without building or extracting an artifact."""
+    root = Path(__file__).resolve().parents[1]
+    destination.mkdir(parents=True)
+    for name in (
+        "src",
+        "scripts",
+        "tests",
+        "plugins",
+        "docs",
+        ".claude-plugin",
+        "pyproject.toml",
+        "uv.lock",
+        "README.md",
+        "CLAUDE.md",
+        "LICENSE",
+        ".gitignore",
+    ):
+        source = root / name
+        if source.is_dir():
+            shutil.copytree(
+                source,
+                destination / name,
+                ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", "runtime", "assets"),
+            )
+        else:
+            shutil.copy2(source, destination / name)
+    return destination
 
 
 def free_port():

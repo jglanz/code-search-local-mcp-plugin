@@ -158,6 +158,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.venvs/
 env/
 venv/
 ENV/
@@ -230,7 +231,7 @@ __marimo__/
 /.venv-*/
 /.test-artifacts/
 
-# Build-generated resources; canonical sources are pyproject.toml, uv.lock and plugins/.
+# Legacy generated resources; Hatchling maps canonical inputs directly into wheels.
 /src/code_search_local/runtime/
 /src/code_search_local/assets/
 /coverage.json
@@ -243,3 +244,6 @@ __marimo__/
 *.faiss
 *.index
 /.code-search-local/
+
+# Private backups written when registering agent harnesses.
+*.code-search-local.bak

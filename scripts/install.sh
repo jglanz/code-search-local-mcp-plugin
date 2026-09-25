@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Compatibility wrapper. Python setup owns all runtime and client configuration.
-exec uvx --from code-search-local==0.2.0 code-search-local setup "$@"
+# Source-checkout wrapper. Python setup owns runtime and client configuration.
+script_path="$(realpath -- "${BASH_SOURCE[0]}")"
+project_root="$(dirname -- "$(dirname -- "$script_path")")"
+cd "$project_root"
+exec hatch run cli setup --source "$project_root" "$@"

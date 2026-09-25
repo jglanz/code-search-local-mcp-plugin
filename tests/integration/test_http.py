@@ -80,6 +80,34 @@ async def test_http_mcp_two_projects(daemon, tmp_path):
             "get_index_stats",
         }
         assert "switch_project" not in {tool.name for tool in tools}
+        by_name = {tool.name: tool for tool in tools}
+        intents = {
+            "index_directory": ("Index code", "Index codebase", "Update index", "get_index_job"),
+            "get_index_job": ("Is indexing done?", "files_processed", "interrupted"),
+            "cancel_index_job": ("Stop indexing", "Cancel the index update", "cooperative"),
+            "search_code": ("Search the code", "source locations", "index_directory"),
+            "get_index_stats": ("Show indexing stats", "Which model/GPU is used?"),
+            "get_index_status": ("Is this codebase indexed?", "does not rescan disk"),
+            "find_similar_code": ("Find similar code", "exact", "chunk_id"),
+            "clear_index": ("explicit request", "index_directory", "must be idle"),
+            "list_projects": ("List indexed projects", "does not", "scan the filesystem"),
+        }
+        assert set(by_name) == set(intents)
+        for name, phrases in intents.items():
+            tool = by_name[name]
+            description = " ".join(tool.description.split())
+            assert all(phrase in description for phrase in phrases), name
+            assert tool.title, name
+            for field, schema in tool.input_schema.get("properties", {}).items():
+                assert schema.get("description"), (name, field)
+            if name not in {"index_directory", "cancel_index_job", "clear_index"}:
+                assert tool.annotations.read_only_hint is True
+        assert by_name["clear_index"].annotations.destructive_hint is True
+        index_schema = by_name["index_directory"].input_schema
+        assert index_schema["properties"]["incremental"]["default"] is True
+        assert index_schema["properties"]["wait"]["default"] is False
+        assert index_schema["required"] == ["directory_path"]
+        assert "project_path" not in by_name["get_index_stats"].input_schema.get("required", [])
         result = await mcp.call_tool("search_code", {"project_path": roots[0], "query": "alpha"})
         assert not result.is_error
         assert "alpha" in str(result)

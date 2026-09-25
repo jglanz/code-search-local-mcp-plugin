@@ -90,6 +90,7 @@ class MerkleDAG:
             "compile_commands.json",
             "vcpkg",
             ".venv",
+            ".venvs",
             "venv",
             "env",
             ".env",

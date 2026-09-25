@@ -1,19 +1,24 @@
 [build-system]
-requires = ["setuptools==84.0.0", "wheel==0.48.0"]
-build-backend = "build_backend"
-backend-path = ["scripts"]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
 
 [project]
 name = "code-search-local"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Multi-project local semantic code search with one shared CPU, CUDA or ROCm model service"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = "GPL-3.0-only"
-authors = [{name = "Farhan Ali Raza"}]
+authors = [{name = "Jonathan Glanz"}]
 dependencies = [
-  "click==8.5.0", "textual==8.2.8", "rich==15.0.0", "aiohttp==3.14.3",
-  "pyzmq==27.2.0", "tomlkit==0.15.1", "uv==0.12.18",
+  "click==8.5.0",
+  "textual==8.2.8",
+  "rich==15.0.0",
+  "aiohttp==3.14.3",
+  "pyzmq==27.2.0",
+  "tomlkit==0.15.1",
+  "json5==0.15.0",
+  "uv==0.12.18",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +36,7 @@ rocm = ["torch==2.14.0", "rocm[device-all,libraries]==7.14.1; sys_platform == 'l
 dev = [
   "build==1.6.1", "pytest==9.1.1", "pytest-asyncio==1.4.0",
   "pytest-cov==7.1.0", "coverage==7.16.1",
-  "ruff==0.16.8", "pipx==1.17.6", "httpx2==2.13.1",
+  "ruff==0.16.8", "pipx==1.17.6", "httpx2==2.13.1", "hatch==1.18.1",
 ]
 
 [project.scripts]
@@ -40,12 +45,68 @@ code-search-local = "code_search_local.cli:main"
 [project.urls]
 Repository = "https://github.com/jglanz/code-search-local-mcp-plugin"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["code_search_local*"]
+[tool.hatch.version]
+path = "src/code_search_local/__init__.py"
 
-[tool.setuptools.package-data]
-code_search_local = ["runtime/*", "assets/**/*"]
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src/", "/plugins/", "/.claude-plugin/", "/scripts/", "/tests/", "/docs/",
+  "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/CLAUDE.md", "/.gitignore",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_search_local"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"pyproject.toml" = "code_search_local/runtime/pyproject.toml"
+"uv.lock" = "code_search_local/runtime/uv.lock"
+"plugins/code-search-local" = "code_search_local/assets/plugin"
+
+[tool.hatch.envs.default]
+path = ".venvs/cpu"
+python = "3.12"
+installer = "uv"
+dependency-groups = ["dev"]
+# Use the same locked vendor indexes as managed setup. Hatch's pip-style
+# dependency installation alone does not apply tool.uv.sources.
+post-install-commands = ["sync"]
+
+[tool.hatch.envs.default.env-vars]
+CODE_SEARCH_DEV_BACKEND = "cpu"
+
+[tool.hatch.envs.default.scripts]
+sync = 'uv sync --project "{root}" --active --locked --extra server --extra {env:CODE_SEARCH_DEV_BACKEND} {args}'
+cli = "python -m code_search_local {args}"
+serve = "python -m code_search_local serve --backend {env:CODE_SEARCH_DEV_BACKEND} {args}"
+setup = 'python -m code_search_local setup --source "{root}" --backend {env:CODE_SEARCH_DEV_BACKEND} {args}'
+test = "python -m pytest {args:tests}"
+coverage = [
+  "test --cov --cov-report=json:coverage.json {args:tests}",
+  "python scripts/check_coverage.py",
+]
+lint = "ruff check --select F,I {args:src scripts tests}"
+fmt = "ruff format {args:src scripts tests}"
+
+[tool.hatch.envs.cpu]
+template = "default"
+
+[tool.hatch.envs.cuda]
+path = ".venvs/cuda"
+
+[tool.hatch.envs.cuda.env-vars]
+CODE_SEARCH_DEV_BACKEND = "cuda"
+
+[tool.hatch.envs.rocm]
+path = ".venvs/rocm"
+
+[tool.hatch.envs.rocm.env-vars]
+CODE_SEARCH_DEV_BACKEND = "rocm"
+
+# Build/test tooling shares the CPU environment, leaving both GPU installs intact.
+[tool.hatch.envs.hatch-build]
+template = "default"
+builder = true
+skip-install = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

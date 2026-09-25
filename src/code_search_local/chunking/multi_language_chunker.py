@@ -25,6 +25,7 @@ class MultiLanguageChunker:
         ".hg",
         ".svn",
         ".venv",
+        ".venvs",
         "venv",
         "env",
         ".env",

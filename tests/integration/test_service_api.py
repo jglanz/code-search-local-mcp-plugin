@@ -56,6 +56,8 @@ async def test_rest_and_mcp_contracts(tmp_path, monkeypatch):
             assert result.json()["results"][0]["name"] == "method"
             assert (await client.post("/api/v1/index", json={})).status_code == 400
         async with fastmcp.Client(servers[0]) as client:
+            assert "Index codebase" in client.instructions
+            assert "absolute workspace root" in client.instructions
             index = await client.call_tool(
                 "index_directory", {"directory_path": str(root), "wait": True}
             )

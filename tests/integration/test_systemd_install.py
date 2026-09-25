@@ -16,20 +16,11 @@ from code_search_local import __version__
 from code_search_local.client import Client
 from code_search_local.config import Settings
 from code_search_local.install import uv_executable
+from tests.helpers import SYSTEMD_DRIVER as DRIVER
 from tests.helpers import free_port
 
 pytestmark = pytest.mark.packaging
 ROOT = Path(__file__).resolve().parents[2]
-
-DRIVER = """
-from pathlib import Path
-import sys
-from code_search_local import install
-from code_search_local.cli import main
-install.SERVICE = sys.argv[1]
-install.unit_path = lambda: Path.home() / ".config/systemd/user" / install.SERVICE
-main(args=sys.argv[2:], standalone_mode=False)
-"""
 
 
 def test_managed_backends_and_both_client_registrations(tmp_path):
@@ -61,7 +52,7 @@ def test_managed_backends_and_both_client_registrations(tmp_path):
         shutil.copytree(source_cache, storage / "models", symlinks=True)
         for pointer in (storage / "models").glob("*.json"):
             data = json.loads(pointer.read_text())
-            old = Path(data["snapshot"])
+            old = Path(data["snapshot"]).resolve()
             data["snapshot"] = str(storage / "models" / old.relative_to(source_cache))
             pointer.write_text(json.dumps(data))
     env.pop("PYTHONPATH", None)
@@ -106,8 +97,10 @@ def test_managed_backends_and_both_client_registrations(tmp_path):
             str(port),
             "--package-source",
             wheel,
-            "--client",
-            "both",
+            "--agent-harness",
+            "claude",
+            "--agent-harness",
+            "codex",
             "--no-cpu-fallback",
         ]
         client = Client(Settings(storage=str(storage), port=port))
@@ -155,7 +148,6 @@ def test_managed_backends_and_both_client_registrations(tmp_path):
         for name in (
             "pyproject.toml",
             "uv.lock",
-            "MANIFEST.in",
             "README.md",
             "LICENSE",
         ):
@@ -166,10 +158,11 @@ def test_managed_backends_and_both_client_registrations(tmp_path):
                 source / name,
                 ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", "runtime", "assets"),
             )
-        metadata = source / "pyproject.toml"
-        metadata.write_text(metadata.read_text().replace('version = "0.2.0"', 'version = "0.2.1"'))
+        next_version = (
+            __version__.rsplit(".", 1)[0] + "." + str(int(__version__.split(".")[-1]) + 1)
+        )
         version = source / "src/code_search_local/__init__.py"
-        version.write_text(version.read_text().replace("0.2.0", "0.2.1"))
+        version.write_text(version.read_text().replace(__version__, next_version))
         run([uv_executable(), "lock", "--project", source])
         run(
             [
@@ -186,7 +179,7 @@ def test_managed_backends_and_both_client_registrations(tmp_path):
         run([pip_python, "-m", "pip", "install", "--upgrade", upgrade])
         upgraded = [upgrade if str(arg) == str(wheel) else arg for arg in common]
         run([pip_python, "-c", DRIVER, service, *upgraded, "--backend", "rocm"])
-        assert "0.2.1-rocm" in run(["systemctl", "--user", "cat", service])
+        assert f"{next_version}-rocm" in run(["systemctl", "--user", "cat", service])
         hits = asyncio.run(
             client.request(
                 "POST",

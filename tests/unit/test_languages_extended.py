@@ -190,6 +190,9 @@ def test_directory_chunking_and_invalid_inputs(tmp_path, monkeypatch):
     (tmp_path / ".claude-context-ignore").write_text("ignored.py\n")
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules" / "x.js").write_text("function ignored() {}")
+    backend_env = tmp_path / ".venvs" / "cuda" / "site-packages"
+    backend_env.mkdir(parents=True)
+    (backend_env / "library.py").write_text("def ignored(): pass\n")
     fresh = MultiLanguageChunker(str(tmp_path))
     chunks = fresh.chunk_directory(str(tmp_path))
     assert chunks and all(c.name != "ignored" for c in chunks)

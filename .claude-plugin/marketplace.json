@@ -7,7 +7,7 @@
     {
       "name": "code-search-local",
       "source": "./plugins/code-search-local",
-      "version": "0.2.0",
+      "version": "1.0.0",
       "description": "Shared local semantic code search with CPU, CUDA and ROCm support."
     }
   ],

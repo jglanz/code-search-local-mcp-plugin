@@ -48,7 +48,7 @@ def test_both_native_marketplaces(tmp_path):
     assert "code-search-local" in run("codex", "plugin", "list", "--json")
     for client in ("claude", "codex"):
         skills = list((tmp_path / client).rglob("SKILL.md"))
-        assert any("code-search-local==0.2.0" in skill.read_text() for skill in skills)
+        assert any("code-search-local==1.0.0" in skill.read_text() for skill in skills)
     # Removing either plugin must not remove the other client's installed package.
     run("claude", "plugin", "uninstall", "code-search-local@code-search-local")
     assert "code-search-local" in run("codex", "plugin", "list", "--json")

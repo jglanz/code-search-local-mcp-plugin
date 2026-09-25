@@ -15,20 +15,20 @@ jobs:
           python-version: '3.12'
       - name: Bootstrap declared installer
         run: |
-          python -m venv .venv-bootstrap
-          .venv-bootstrap/bin/python -m pip install .
-          .venv-bootstrap/bin/uv sync --locked --extra server --extra cpu
+          python -m venv .venvs/cpu
+          .venvs/cpu/bin/python -m pip install .
+          UV_PROJECT_ENVIRONMENT=.venvs/cpu .venvs/cpu/bin/uv sync --locked --extra server --extra cpu
+          .venvs/cpu/bin/hatch run cli --version
       - name: Static checks and separate coverage floors
         run: |
-          .venv/bin/ruff check src scripts tests --select F,I
-          .venv/bin/pytest --cov --cov-report=json:coverage.json --cov-report=xml
-          .venv/bin/python scripts/check_coverage.py
+          .venvs/cpu/bin/hatch run lint
+          .venvs/cpu/bin/hatch run coverage --cov-report=xml
       - name: Build and test all installers
         env:
           CODE_SEARCH_PACKAGING: '1'
         run: |
-          .venv/bin/python -m build
-          .venv/bin/pytest tests/integration/test_packaging.py
+          .venvs/cpu/bin/hatch build
+          .venvs/cpu/bin/hatch run test tests/integration/test_packaging.py
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: distributions

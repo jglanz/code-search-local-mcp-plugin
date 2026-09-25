@@ -1,8 +1,0 @@
-include pyproject.toml uv.lock LICENSE README.md
-recursive-include plugins *.json *.md
-recursive-include .claude-plugin *.json
-recursive-include src/code_search_local/runtime *
-recursive-include src/code_search_local/assets *
-recursive-include docs *.md
-recursive-include tests *.py *.md *.c *.cpp *.cs *.java *.go *.rs *.svelte *.js *.jsx *.ts *.tsx
-recursive-include scripts *.py *.sh

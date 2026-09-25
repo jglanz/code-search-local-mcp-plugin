@@ -62,21 +62,57 @@ def serve(**kwargs):
 
 @main.command()
 @settings_options
-@click.option("--client", type=click.Choice(["claude", "codex", "both"]), required=True)
+@click.option("--client", type=click.Choice(["claude", "codex", "both"]), hidden=True)
+@click.option(
+    "--agent-harness",
+    multiple=True,
+    type=click.Choice(["none", "codex", "claude", "opencode", "all"]),
+    help="Register in selected harnesses; repeat for several. Default: none.",
+)
+@click.option(
+    "--marketplace",
+    is_flag=True,
+    help="Keep the calling marketplace plugin and remove the service when it is uninstalled.",
+)
 @click.option(
     "--package-source",
     type=click.Path(exists=True, dir_okay=False),
     help="Install a locally built wheel instead of the published release.",
 )
-def setup(client, package_source, **kwargs):
-    """Install a persistent backend runtime, user service and HTTP MCP connection."""
+@click.option(
+    "--source",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Run the service from this checkout and its .venvs/<backend> editable environment.",
+)
+def setup(client, agent_harness, marketplace, package_source, source, **kwargs):
+    """Install a user service and client connections from a release or source checkout."""
     import subprocess
 
     from .install import setup as install
 
+    if source is not None and package_source is not None:
+        raise click.UsageError("--source cannot be used with --package-source")
+    from .harnesses import selection
+
+    if client is not None and agent_harness:
+        raise click.UsageError("--client cannot be combined with --agent-harness")
     try:
-        output(install(load_settings(**kwargs), client=client, package_source=package_source))
-    except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+        if client is not None:
+            agent_harness = ("claude", "codex") if client == "both" else (client,)
+        agent_harness = selection(agent_harness)
+    except ValueError as error:
+        raise click.UsageError(str(error)) from error
+    try:
+        output(
+            install(
+                load_settings(**kwargs),
+                agent_harness=agent_harness,
+                marketplace=marketplace,
+                package_source=package_source,
+                source=source,
+            )
+        )
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         raise click.ClickException(str(error)) from error
 
 
@@ -96,12 +132,33 @@ for _action in ("start", "stop", "restart", "status", "uninstall"):
 
             try:
                 service_action(action)
-            except (OSError, subprocess.CalledProcessError) as error:
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 raise click.ClickException(str(error)) from error
 
         return command
 
     _make_action(_action)
+
+
+@main.command()
+def uninstall():
+    """Stop/remove the user service and unregister Code Search Local from agent harnesses."""
+    import subprocess
+
+    from .lifecycle import uninstall as remove
+
+    try:
+        output(remove())
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        raise click.ClickException(str(error)) from error
+
+
+@main.command(hidden=True)
+def marketplace_check():
+    """Reconcile native plugin removal (invoked by the installed systemd watcher)."""
+    from .lifecycle import marketplace_check as check
+
+    output(check())
 
 
 @main.command()

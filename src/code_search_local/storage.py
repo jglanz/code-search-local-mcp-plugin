@@ -32,6 +32,21 @@ def sync_dir(path: Path):
         os.close(descriptor)
 
 
+def atomic_text(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=".code-search-local-")
+    try:
+        with os.fdopen(fd, "w") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+        sync_dir(path.parent)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
 def atomic_json(path: Path, value, *, mode: int = 0o600):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)

@@ -110,6 +110,9 @@ class TestMerkleDAG(TestCase):
         (self.test_path / "__pycache__").mkdir()
         (self.test_path / "__pycache__" / "cache.pyc").write_text("cache")
         (self.test_path / "test.pyc").write_text("pyc")
+        backend_env = self.test_path / ".venvs" / "rocm" / "site-packages"
+        backend_env.mkdir(parents=True)
+        (backend_env / "library.py").write_text("def dependency(): pass\n")
 
         dag = MerkleDAG(self.temp_dir)
         dag.build()
@@ -120,6 +123,7 @@ class TestMerkleDAG(TestCase):
         assert ".git/config" not in all_files
         assert "__pycache__/cache.pyc" not in all_files
         assert "test.pyc" not in all_files
+        assert not any(path.startswith(".venvs/") for path in all_files)
 
         # Regular files should be present
         assert "README.md" in all_files

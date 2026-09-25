@@ -10,6 +10,8 @@ Every direct application, test and build dependency is declared in `pyproject.to
 | [coverage](https://pypi.org/project/coverage/) | 7.16.1 | 2026-09-13 |
 | [faiss-cpu](https://pypi.org/project/faiss-cpu/) | 1.15.1 | 2026-09-16 |
 | [fastmcp](https://pypi.org/project/fastmcp/) | 4.0.7 | 2026-09-23 |
+| [hatch](https://pypi.org/project/hatch/) | 1.18.1 | 2026-09-16 |
+| [hatchling](https://pypi.org/project/hatchling/) | 1.32.4 | 2026-09-20 |
 | [httpx2](https://pypi.org/project/httpx2/) | 2.13.1 | 2026-09-23 |
 | [huggingface-hub](https://pypi.org/project/huggingface-hub/) | 1.32.0 | 2026-09-17 |
 | [numpy](https://pypi.org/project/numpy/) | 2.5.3 | 2026-09-06 |
@@ -22,7 +24,6 @@ Every direct application, test and build dependency is declared in `pyproject.to
 | [rich](https://pypi.org/project/rich/) | 15.0.0 | 2026-04-12 |
 | [ruff](https://pypi.org/project/ruff/) | 0.16.8 | 2026-09-16 |
 | [sentence-transformers](https://pypi.org/project/sentence-transformers/) | 6.1.0 | 2026-09-18 |
-| [setuptools](https://pypi.org/project/setuptools/) | 84.0.0 | 2026-08-08 |
 | [starlette](https://pypi.org/project/starlette/) | 1.7.0 | 2026-09-23 |
 | [textual](https://pypi.org/project/textual/) | 8.2.8 | 2026-06-30 |
 | [tomlkit](https://pypi.org/project/tomlkit/) | 0.15.1 | 2026-07-17 |
@@ -31,9 +32,12 @@ Every direct application, test and build dependency is declared in `pyproject.to
 | [uv](https://pypi.org/project/uv/) | 0.12.18 | 2026-09-22 |
 | [uvicorn](https://pypi.org/project/uvicorn/) | 0.53.0 | 2026-09-14 |
 | [watchfiles](https://pypi.org/project/watchfiles/) | 1.3.0 | 2026-09-21 |
-| [wheel](https://pypi.org/project/wheel/) | 0.48.0 | 2026-08-11 |
 
 Pytest-cov's stable release is just outside six months, but [upstream maintenance](https://github.com/pytest-dev/pytest-cov) was verified on 2026-09-21. The other selected PyPI packages above have releases within six months. Unused pytest-mock and PyYAML were removed rather than installed. SQLite comes from Python's standard library.
+
+Hatchling replaces the custom setuptools backend. Its [declarative file mappings](https://hatch.pypa.io/latest/config/build/#forced-inclusion) include runtime metadata and plugin assets directly in wheels, including editable installations. The source distribution contains the canonical inputs needed to rebuild those wheels.
+
+Hatch 1.18.1 was additionally checked on 2026-09-24. Its native [uv installer support](https://hatch.pypa.io/latest/plugins/environment/virtual/) avoids a separate `hatch-uv` plugin (last released in 2024). The default/build roles share `.venvs/cpu`; CUDA and ROCm use `.venvs/cuda` and `.venvs/rocm`. Project scripts synchronize the locked server and backend dependencies through uv because Hatch's pip-style installer does not apply `tool.uv.sources`. Use `hatch run cpu:sync`, `hatch run cuda:sync` and `hatch run rocm:sync` to synchronize independent editable environments. Source setup uses the same declared paths and lockfile without a release artifact. Development tools are declared once in the `dev` dependency group.
 
 ## Alternatives examined
 
@@ -47,4 +51,6 @@ Pytest-cov's stable release is just outside six months, but [upstream maintenanc
 
 PyTorch 2.14.0 is selected from its [CPU](https://download.pytorch.org/whl/cpu/torch/), [CUDA 13.0](https://download.pytorch.org/whl/cu130/torch/) or [ROCm 7.14](https://download.pytorch.org/whl/rocm7.14/torch/) index. ROCm 7.14.1 and device libraries come from the PyTorch ROCm and [AMD multi-architecture](https://repo.amd.com/rocm/whl-multi-arch/) indexes. These wheels install into isolated environments, following [AMD's venv runtime packaging](https://rocm.docs.amd.com/en/docs-7.14.0/install/rocm.html).
 
-The unrelated PyPI `rocm` package must never satisfy the runtime requirement. ROCm components are direct optional dependencies with explicit uv source mappings because uv does not apply source overrides to purely transitive packages. The CPU, CUDA and ROCm extras conflict by design. FAISS always uses the CPU wheel; embeddings use the selected GPU.
+The unrelated PyPI `rocm` package must never satisfy the runtime requirement. ROCm components are direct optional dependencies with explicit uv source mappings because uv does not apply source overrides to purely transitive packages. Only one PyTorch backend extra is installed per environment; the separate CPU, CUDA and ROCm environments coexist. FAISS always uses the CPU wheel; embeddings use the selected GPU.
+
+The OpenCode configuration parser was checked on 2026-09-24: [json5 0.15.0](https://pypi.org/project/json5/) was released on 2026-06-19 and handles JSONC comments/trailing commas. It is declared in `pyproject.toml` and locked by uv. Alternatives considered were [pyjson5](https://pypi.org/project/pyjson5/) (maintained, compiled parser), [json-with-comments](https://pypi.org/project/json-with-comments/) (recent but much smaller adoption), and [jsonc-parser](https://pypi.org/project/jsonc-parser/) (last released in 2021). json5 provides the widely used pure-Python option for these small configuration files. Writes normalize to JSON; private backups retain original comments. Marketplace cleanup uses existing Linux systemd path/timer units and the standard library rather than adding another background watcher dependency.

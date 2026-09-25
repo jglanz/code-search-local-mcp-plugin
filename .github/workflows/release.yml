@@ -23,24 +23,26 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Install locked CUDA runtime
         run: |
-          python3 -m venv .venv-bootstrap
-          .venv-bootstrap/bin/python -m pip install .
-          .venv-bootstrap/bin/uv sync --locked --extra server --extra cuda
+          python3 -m venv .venvs/cpu
+          .venvs/cpu/bin/python -m pip install .
+          UV_PROJECT_ENVIRONMENT=.venvs/cpu .venvs/cpu/bin/uv sync --locked --extra server --extra cpu
+          .venvs/cpu/bin/hatch run cuda:sync
       - name: Real CUDA and two-client cold-cache acceptance
         run: |
-          CODE_SEARCH_GPU_BACKEND=cuda .venv/bin/pytest tests/integration/test_gpu.py
-          CODE_SEARCH_REAL_CLIENTS=1 .venv/bin/pytest tests/integration/test_real_clients.py
-          CODE_SEARCH_MARKETPLACES=1 .venv/bin/pytest tests/integration/test_marketplaces.py
+          CODE_SEARCH_GPU_BACKEND=cuda .venvs/cpu/bin/hatch run cuda:test tests/integration/test_gpu.py
+          CODE_SEARCH_REAL_CLIENTS=1 .venvs/cpu/bin/hatch run cuda:test tests/integration/test_real_clients.py
+          CODE_SEARCH_MARKETPLACES=1 .venvs/cpu/bin/hatch run test tests/integration/test_marketplaces.py
+          CODE_SEARCH_MARKETPLACES=1 CODE_SEARCH_SYSTEMD_TESTS=1 .venvs/cpu/bin/hatch run test tests/integration/test_marketplace_lifecycle.py
       - name: Real ROCm acceptance
         run: |
-          UV_PROJECT_ENVIRONMENT=.venv-rocm .venv/bin/uv sync --locked --extra server --extra rocm
-          CODE_SEARCH_GPU_BACKEND=rocm .venv-rocm/bin/pytest tests/integration/test_gpu.py
+          .venvs/cpu/bin/hatch run rocm:sync
+          CODE_SEARCH_GPU_BACKEND=rocm .venvs/cpu/bin/hatch run rocm:test tests/integration/test_gpu.py
       - uses: actions/download-artifact@v8.0.1
         with:
           name: distributions
           path: dist
       - name: Persistent installation and upgrade acceptance
-        run: CODE_SEARCH_SYSTEMD_TESTS=1 .venv/bin/pytest tests/integration/test_systemd_install.py
+        run: CODE_SEARCH_SYSTEMD_TESTS=1 .venvs/cpu/bin/hatch run test tests/integration/test_systemd_install.py tests/integration/test_source_systemd.py
   publish:
     needs: [portable, acceptance]
     if: inputs.publish
