@@ -1,50 +1,44 @@
 """Go-specific tree-sitter based chunker."""
 
-from typing import Any, Dict, Set
+from typing import Any, Dict
 
+from code_search_local import constants
 from code_search_local.chunking.base_chunker import LanguageChunker
 
 
 class GoChunker(LanguageChunker):
     """Go-specific chunker using tree-sitter."""
 
-    def __init__(self):
-        super().__init__("go")
+    LANGUAGE_NAME = constants.LANGUAGE_GO
 
-    def _get_splittable_node_types(self) -> Set[str]:
-        """Go-specific splittable node types."""
-        return {
-            "function_declaration",
-            "method_declaration",
-            "type_declaration",
-            "interface_declaration",
-            "struct_declaration",
+    SPLITTABLE_NODE_TYPES = frozenset(
+        {
+            constants.KEY_FUNCTION_DECLARATION,
+            constants.KEY_METHOD_DECLARATION,
+            constants.KEY_TYPE_DECLARATION,
+            constants.KEY_INTERFACE_DECLARATION,
+            constants.KEY_STRUCT_DECLARATION,
         }
+    )
 
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
         """Extract Go-specific metadata."""
-        metadata = {"node_type": node.type}
-
-        # Extract function/method/type name
-        for child in node.children:
-            if child.type == "identifier":
-                metadata["name"] = self.get_node_text(child, source)
-                break
+        metadata = self.named_metadata(node, source)
 
         # For methods, extract receiver type
-        if node.type == "method_declaration":
+        if node.type == constants.KEY_METHOD_DECLARATION:
             for child in node.children:
-                if child.type == "parameter_list":
+                if child.type == constants.SYNTAX_PARAMETER_LIST:
                     # First parameter_list is the receiver
                     for receiver_child in child.children:
-                        if receiver_child.type == "parameter_declaration":
+                        if receiver_child.type == constants.SYNTAX_PARAMETER_DECLARATION:
                             for param_child in receiver_child.children:
                                 if param_child.type in [
-                                    "identifier",
-                                    "pointer_type",
-                                    "type_identifier",
+                                    constants.SYNTAX_IDENTIFIER,
+                                    constants.SYNTAX_POINTER_TYPE,
+                                    constants.SYNTAX_TYPE_IDENTIFIER,
                                 ]:
-                                    metadata["receiver_type"] = self.get_node_text(
+                                    metadata[constants.KEY_RECEIVER_TYPE] = self.get_node_text(
                                         param_child, source
                                     )
                                     break

@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
+from code_search_local import constants
 from code_search_local.chunking.base_chunker import AVAILABLE_LANGUAGES, TreeSitterChunk
 from code_search_local.chunking.languages import LANGUAGE_MAP
 
@@ -67,21 +68,23 @@ class TreeSitterChunker:
             # Cheap pre-check: bail on binary or non-utf8 sources before doing
             # the full read + tree-sitter parse. Costs ~4 KB of I/O per file.
             try:
-                with open(file_path, "rb") as fb:
-                    head = fb.read(4096)
+                with open(file_path, constants.FILE_MODE_READ_BINARY) as fb:
+                    head = fb.read(constants.BINARY_PROBE_BYTES)
             except OSError as e:
                 logger.error(f"Failed to read file {file_path}: {e}")
                 return []
-            if b"\x00" in head:
+            if constants.BINARY_NULL_BYTE in head:
                 logger.debug(f"Skipping binary file: {file_path}")
                 return []
             try:
-                head.decode("utf-8")
+                head.decode(constants.TEXT_ENCODING)
             except UnicodeDecodeError:
                 logger.debug(f"Skipping non-utf8 file: {file_path}")
                 return []
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(
+                    file_path, constants.FILE_MODE_READ, encoding=constants.TEXT_ENCODING
+                ) as f:
                     content = f.read()
             except Exception as e:
                 logger.error(f"Failed to read file {file_path}: {e}")

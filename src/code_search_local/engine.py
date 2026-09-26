@@ -13,12 +13,19 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
+from code_search_local import constants
+
 from .config import canonical_project
 from .models import ModelWorker, SentenceModel
 from .storage import Generations, ServiceLock, State, utc_now
 
 log = logging.getLogger(__name__)
-TERMINAL = {"succeeded", "failed", "cancelled", "interrupted"}
+TERMINAL = {
+    constants.STATUS_SUCCEEDED,
+    constants.STATUS_FAILED,
+    constants.STATUS_CANCELLED,
+    constants.STATUS_INTERRUPTED,
+}
 
 
 class Cancelled(Exception):
@@ -32,10 +39,10 @@ def chunk_file(project, relative, expected_hash):
     content = path.read_bytes()
     if hashlib.sha256(content).hexdigest() != expected_hash:
         raise RuntimeError(f"File changed while indexing: {relative}; retry indexing")
-    if b"\0" in content:
+    if constants.BINARY_NULL_BYTE in content:
         return []
     try:
-        text = content.decode("utf-8")
+        text = content.decode(constants.TEXT_ENCODING)
     except UnicodeDecodeError:
         return []
     chunker = MultiLanguageChunker(project)
@@ -45,21 +52,33 @@ def chunk_file(project, relative, expected_hash):
     result = []
     for chunk in chunks:
         entry = asdict(chunk)
-        entry["chunk_id"] = (
-            f"{relative}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.name or ''}"
+        entry[constants.KEY_CHUNK_ID] = constants.CHUNK_ID_TEMPLATE.format(
+            path=relative,
+            start=chunk.start_line,
+            end=chunk.end_line,
+            kind=chunk.chunk_type,
+            name=chunk.name or "",
         )
-        entry["content_preview"] = chunk.content[:400]
+        entry[constants.KEY_CONTENT_PREVIEW] = chunk.content[: constants.CONTENT_PREVIEW_CHARACTERS]
         result.append(entry)
     return result
 
 
 def embedding_text(chunk):
-    doc = f'"""{chunk["docstring"][:300]}"""\n' if chunk.get("docstring") else ""
-    content = chunk["content"]
-    budget = 6000 - len(doc)
+    doc = (
+        f'"""{chunk[constants.KEY_DOCSTRING][: constants.EMBEDDING_DOCSTRING_CHARACTERS]}"""\n'
+        if chunk.get(constants.KEY_DOCSTRING)
+        else ""
+    )
+    content = chunk[constants.KEY_CONTENT]
+    budget = constants.EMBEDDING_MAX_CHARACTERS - len(doc)
     if len(content) > budget:
-        head = int(budget * 0.7)
-        content = content[:head] + "\n...\n" + content[-(budget - head - 5) :]
+        head = int(budget * constants.EMBEDDING_HEAD_FRACTION)
+        content = (
+            content[:head]
+            + constants.EMBEDDING_TRUNCATION_MARKER
+            + content[-(budget - head - len(constants.EMBEDDING_TRUNCATION_MARKER)) :]
+        )
     return doc + content
 
 
@@ -79,9 +98,11 @@ class Engine:
             self.lock.close()
             raise
         self.projects = ThreadPoolExecutor(
-            settings.project_workers, thread_name_prefix="index-project"
+            settings.project_workers, thread_name_prefix=constants.PROJECT_THREAD_PREFIX
         )
-        self.chunkers = ThreadPoolExecutor(settings.chunk_workers, thread_name_prefix="chunk-file")
+        self.chunkers = ThreadPoolExecutor(
+            settings.chunk_workers, thread_name_prefix=constants.CHUNK_THREAD_PREFIX
+        )
         self.guard = threading.RLock()
         self.stores = {}
         self.queues = defaultdict(deque)
@@ -93,31 +114,35 @@ class Engine:
         try:
             self._migrate_legacy()
             pending = []
-            with self.state.edit("daemon.started") as value:
-                for job in value["jobs"].values():
-                    if job["status"] not in TERMINAL:
+            with self.state.edit(constants.EVENT_DAEMON_STARTED) as value:
+                for job in value[constants.KEY_JOBS].values():
+                    if job[constants.KEY_STATUS] not in TERMINAL:
                         job.update(
-                            status="interrupted",
+                            status=constants.STATUS_INTERRUPTED,
                             finished_at=utc_now(),
                             error="Service restarted; a reconciliation job will rescan the project",
                         )
-                for project, stats in value["projects"].items():
+                for project, stats in value[constants.KEY_PROJECTS].items():
                     generation = self._store(project).read()
                     if generation:
-                        stats.update(generation[2]["stats"])
-                    if recover and Path(project).is_dir() and stats.get("watch_enabled", True):
+                        stats.update(generation[2][constants.KEY_STATS])
+                    if (
+                        recover
+                        and Path(project).is_dir()
+                        and stats.get(constants.KEY_WATCH_ENABLED, True)
+                    ):
                         pending.append(project)
             for project in pending:
                 self.index(
                     project,
                     wait=False,
-                    file_patterns=self.state.snapshot(project)["projects"][project].get(
-                        "file_patterns"
+                    file_patterns=self.state.snapshot(project)[constants.KEY_PROJECTS][project].get(
+                        constants.KEY_FILE_PATTERNS
                     ),
                 )
             if settings.watch:
                 self.watch_thread = threading.Thread(
-                    target=self._watch, name="project-watcher", daemon=True
+                    target=self._watch, name=constants.WATCHER_THREAD_NAME, daemon=True
                 )
                 self.watch_thread.start()
         except Exception:
@@ -126,41 +151,47 @@ class Engine:
 
     def _migrate_legacy(self):
         """Preserve old indexes; absent model fingerprints require a safe rebuild."""
-        for info_path in (self.settings.root / "projects").glob("*/project_info.json"):
+        for info_path in (self.settings.root / constants.KEY_PROJECTS).glob(
+            constants.PATH_PROJECT_INFO_JSON
+        ):
             try:
                 info = json.loads(info_path.read_text())
             except (ValueError, OSError):
                 log.warning("Cannot read legacy project information: %s", info_path)
                 continue
-            root = info.get("root_path") or info.get("project_path") or info.get("directory_path")
+            root = (
+                info.get(constants.KEY_ROOT_PATH)
+                or info.get(constants.KEY_PROJECT_PATH)
+                or info.get(constants.KEY_DIRECTORY_PATH)
+            )
             if not root:
                 continue
             project = canonical_project(root)
-            backup = self.settings.root / "legacy-backups" / info_path.parent.name
+            backup = self.settings.root / constants.LEGACY_BACKUP_DIRECTORY / info_path.parent.name
             if not backup.exists():
                 shutil.copytree(info_path.parent, backup)
             self._register(project)
-            with self.state.edit("project.migrated", project) as value:
-                value["projects"][project]["legacy_backup"] = str(backup)
-                if not value["projects"][project].get("generation"):
-                    value["projects"][project]["needs_rebuild"] = True
+            with self.state.edit(constants.EVENT_PROJECT_MIGRATED, project) as value:
+                value[constants.KEY_PROJECTS][project][constants.KEY_LEGACY_BACKUP] = str(backup)
+                if not value[constants.KEY_PROJECTS][project].get(constants.KEY_GENERATION):
+                    value[constants.KEY_PROJECTS][project][constants.KEY_NEEDS_REBUILD] = True
 
     def _register(self, project):
         with self.guard:
-            if project not in self.state.snapshot()["projects"]:
-                with self.state.edit("project.registered", project) as value:
-                    value["projects"][project] = {
-                        "project_path": project,
-                        "registered_at": utc_now(),
-                        "files": 0,
-                        "chunks": 0,
-                        "cache_hits": 0,
-                        "cache_misses": 0,
-                        "searches": 0,
-                        "search_failures": 0,
-                        "index_failures": 0,
-                        "updates_detected": 0,
-                        "generation": None,
+            if project not in self.state.snapshot()[constants.KEY_PROJECTS]:
+                with self.state.edit(constants.EVENT_PROJECT_REGISTERED, project) as value:
+                    value[constants.KEY_PROJECTS][project] = {
+                        constants.KEY_PROJECT_PATH: project,
+                        constants.KEY_REGISTERED_AT: utc_now(),
+                        constants.KEY_FILES: 0,
+                        constants.KEY_CHUNKS: 0,
+                        constants.KEY_CACHE_HITS: 0,
+                        constants.KEY_CACHE_MISSES: 0,
+                        constants.KEY_SEARCHES: 0,
+                        constants.KEY_SEARCH_FAILURES: 0,
+                        constants.KEY_INDEX_FAILURES: 0,
+                        constants.KEY_UPDATES_DETECTED: 0,
+                        constants.KEY_GENERATION: None,
                     }
                 self.watch_reset.set()
 
@@ -183,19 +214,19 @@ class Engine:
             job_id = uuid.uuid4().hex
             future = self.futures[job_id] = Future()
             self.cancellations[job_id] = threading.Event()
-            with self.state.edit("job.queued", project) as value:
-                value["jobs"][job_id] = {
-                    "job_id": job_id,
-                    "project_path": project,
-                    "status": "queued",
-                    "queued_at": utc_now(),
-                    "files_processed": 0,
-                    "incremental": incremental,
-                    "file_patterns": file_patterns,
-                    "error": None,
+            with self.state.edit(constants.EVENT_JOB_QUEUED, project) as value:
+                value[constants.KEY_JOBS][job_id] = {
+                    constants.KEY_JOB_ID: job_id,
+                    constants.KEY_PROJECT_PATH: project,
+                    constants.KEY_STATUS: constants.STATUS_QUEUED,
+                    constants.KEY_QUEUED_AT: utc_now(),
+                    constants.KEY_FILES_PROCESSED: 0,
+                    constants.KEY_INCREMENTAL: incremental,
+                    constants.KEY_FILE_PATTERNS: file_patterns,
+                    constants.KEY_ERROR: None,
                 }
-                value["projects"][project]["file_patterns"] = file_patterns
-                value["projects"][project]["watch_enabled"] = True
+                value[constants.KEY_PROJECTS][project][constants.KEY_FILE_PATTERNS] = file_patterns
+                value[constants.KEY_PROJECTS][project][constants.KEY_WATCH_ENABLED] = True
             queue = self.queues[project]
             queue.append(job_id)
             if len(queue) == 1:
@@ -206,7 +237,7 @@ class Engine:
 
     def job(self, project, job_id):
         project = canonical_project(project, absolute=True)
-        job = self.state.snapshot(project)["jobs"].get(job_id)
+        job = self.state.snapshot(project)[constants.KEY_JOBS].get(job_id)
         if job is None:
             raise KeyError(f"Unknown job for this project: {job_id}")
         return job
@@ -214,7 +245,7 @@ class Engine:
     def cancel(self, project, job_id):
         job = self.job(project, job_id)
         with self.guard:
-            if job["status"] not in TERMINAL:
+            if job[constants.KEY_STATUS] not in TERMINAL:
                 self.cancellations[job_id].set()
         return self.job(project, job_id)
 
@@ -227,29 +258,35 @@ class Engine:
         persistence_error = None
         try:
             self._check_cancel(job_id)
-            with self.state.edit("job.started", project) as value:
-                value["jobs"][job_id].update(status="running", started_at=utc_now())
+            with self.state.edit(constants.EVENT_JOB_STARTED, project) as value:
+                value[constants.KEY_JOBS][job_id].update(
+                    status=constants.STATUS_RUNNING, started_at=utc_now()
+                )
             result = self._build(project, job_id)
-            with self.state.edit("job.completed", project) as value:
-                value["jobs"][job_id].update(status="succeeded", result=result)
+            with self.state.edit(constants.EVENT_JOB_COMPLETED, project) as value:
+                value[constants.KEY_JOBS][job_id].update(
+                    status=constants.STATUS_SUCCEEDED, result=result
+                )
         except Exception as error:
             if not isinstance(error, Cancelled):
                 log.exception("Index job %s failed for %s", job_id, project)
             try:
-                with self.state.edit("job.failed", project) as value:
-                    value["jobs"][job_id].update(
-                        status="cancelled" if isinstance(error, Cancelled) else "failed",
+                with self.state.edit(constants.EVENT_JOB_FAILED, project) as value:
+                    value[constants.KEY_JOBS][job_id].update(
+                        status=constants.STATUS_CANCELLED
+                        if isinstance(error, Cancelled)
+                        else constants.STATUS_FAILED,
                         error=str(error),
                     )
                     if not isinstance(error, Cancelled):
-                        value["projects"][project]["index_failures"] += 1
+                        value[constants.KEY_PROJECTS][project][constants.KEY_INDEX_FAILURES] += 1
             except Exception as error:
                 persistence_error = error
                 log.exception("Cannot persist failed job %s", job_id)
         finally:
             try:
-                with self.state.edit("job.finished", project) as value:
-                    value["jobs"][job_id].update(
+                with self.state.edit(constants.EVENT_JOB_FINISHED, project) as value:
+                    value[constants.KEY_JOBS][job_id].update(
                         finished_at=utc_now(), duration_seconds=time.monotonic() - start
                     )
             except Exception as error:
@@ -278,33 +315,45 @@ class Engine:
         dag = MerkleDAG(project, self.settings.max_file_bytes)
         dag.build()
         all_files = dag.get_file_hashes()
-        patterns = job["file_patterns"]
+        patterns = job[constants.KEY_FILE_PATTERNS]
         snapshot = {
             path: digest
             for path, digest in all_files.items()
             if Path(path).suffix.lower() in MultiLanguageChunker.SUPPORTED_EXTENSIONS
             and (not patterns or any(fnmatch.fnmatch(path, p) for p in patterns))
         }
-        old_snapshot = previous[2]["snapshot"] if previous else {}
+        old_snapshot = previous[2][constants.KEY_SNAPSHOT] if previous else {}
         added = snapshot.keys() - old_snapshot.keys()
         removed = old_snapshot.keys() - snapshot.keys()
         modified = {
             p for p in snapshot.keys() & old_snapshot.keys() if snapshot[p] != old_snapshot[p]
         }
-        changes = {"added": len(added), "modified": len(modified), "deleted": len(removed)}
+        changes = {
+            constants.KEY_ADDED: len(added),
+            constants.KEY_MODIFIED: len(modified),
+            constants.KEY_DELETED: len(removed),
+        }
         info = self.model.info(project)
-        fingerprint = {key: info[key] for key in ("model", "revision", "dimension", "encoding")}
+        fingerprint = {
+            key: info[key]
+            for key in (
+                constants.KEY_MODEL,
+                constants.KEY_REVISION,
+                constants.KEY_DIMENSION,
+                constants.KEY_ENCODING,
+            )
+        }
         compatible = (
             previous is not None
-            and previous[2]["fingerprint"] == fingerprint
-            and job["incremental"]
+            and previous[2][constants.KEY_FINGERPRINT] == fingerprint
+            and job[constants.KEY_INCREMENTAL]
         )
         changed = added | modified if compatible else snapshot.keys()
         unchanged = snapshot.keys() - changed
         chunks, vectors = [], []
         if compatible:
             for i, chunk in enumerate(previous[1]):
-                if chunk["relative_path"] in unchanged:
+                if chunk[constants.KEY_RELATIVE_PATH] in unchanged:
                     chunks.append(chunk)
                     vectors.append(previous[0].reconstruct(i))
         reused_chunks = len(chunks)
@@ -325,26 +374,26 @@ class Engine:
                 encoded = self.model.encode(project, [embedding_text(c) for c in new_chunks])
                 vectors.extend(encoded)
                 chunks.extend(new_chunks)
-            with self.state.edit("job.progress", project) as value:
-                value["jobs"][job_id]["files_processed"] += 1
-                value["jobs"][job_id]["files_total"] = len(changed)
+            with self.state.edit(constants.EVENT_JOB_PROGRESS, project) as value:
+                value[constants.KEY_JOBS][job_id][constants.KEY_FILES_PROCESSED] += 1
+                value[constants.KEY_JOBS][job_id][constants.KEY_FILES_TOTAL] = len(changed)
         self._check_cancel(job_id)
-        indexed_files = len({c["relative_path"] for c in chunks})
+        indexed_files = len({c[constants.KEY_RELATIVE_PATH] for c in chunks})
         stats = {
-            "files": indexed_files,
-            "files_scanned": len(all_files),
-            "files_supported": len(snapshot),
-            "files_skipped": len(all_files) - indexed_files,
-            "chunks": len(chunks),
-            "source_bytes": sum(dag.nodes[p].size for p in snapshot),
-            "indexed_at": utc_now(),
-            "changes": changes,
-            "reused_chunks": reused_chunks,
-            "model": self.model.info(project),
-            "merkle_root": dag.get_root_hash(),
-            "needs_rebuild": False,
+            constants.KEY_FILES: indexed_files,
+            constants.KEY_FILES_SCANNED: len(all_files),
+            constants.KEY_FILES_SUPPORTED: len(snapshot),
+            constants.KEY_FILES_SKIPPED: len(all_files) - indexed_files,
+            constants.KEY_CHUNKS: len(chunks),
+            constants.KEY_SOURCE_BYTES: sum(dag.nodes[p].size for p in snapshot),
+            constants.KEY_INDEXED_AT: utc_now(),
+            constants.KEY_CHANGES: changes,
+            constants.KEY_REUSED_CHUNKS: reused_chunks,
+            constants.KEY_MODEL: self.model.info(project),
+            constants.KEY_MERKLE_ROOT: dag.get_root_hash(),
+            constants.KEY_NEEDS_REBUILD: False,
         }
-        array = np.asarray(vectors, dtype=np.float32).reshape((-1, info["dimension"]))
+        array = np.asarray(vectors, dtype=np.float32).reshape((-1, info[constants.KEY_DIMENSION]))
         # Serialize cancellation with publication. No cancelled job can publish afterward.
         stats = store.publish(
             chunks,
@@ -355,18 +404,20 @@ class Engine:
             before_publish=lambda _: self._check_cancel(job_id),
             publication_lock=self.guard,
         )
-        with self.state.edit("index.committed", project) as value:
-            value["projects"][project].update(stats)
-            value["projects"][project]["updates_detected"] += sum(changes.values())
+        with self.state.edit(constants.EVENT_INDEX_COMMITTED, project) as value:
+            value[constants.KEY_PROJECTS][project].update(stats)
+            value[constants.KEY_PROJECTS][project][constants.KEY_UPDATES_DETECTED] += sum(
+                changes.values()
+            )
         return stats
 
-    def search(self, project, query, *, k=10, filters=None):
+    def search(self, project, query, *, k=constants.DEFAULT_SEARCH_RESULTS, filters=None):
         import faiss
         import numpy as np
 
         project = canonical_project(project, absolute=True)
         self.state.snapshot(project)
-        if not query.strip() or not 1 <= k <= 100:
+        if not query.strip() or not 1 <= k <= constants.MAX_SEARCH_RESULTS:
             raise ValueError("query must be nonempty and k must be between 1 and 100")
         start = time.monotonic()
         failed = False
@@ -377,15 +428,17 @@ class Engine:
             index, chunks, info = generation
             if not chunks:
                 return {
-                    "project_path": project,
-                    "generation": info["stats"]["generation"],
-                    "results": [],
+                    constants.KEY_PROJECT_PATH: project,
+                    constants.KEY_GENERATION: info[constants.KEY_STATS][constants.KEY_GENERATION],
+                    constants.KEY_RESULTS: [],
                 }
             model_info = self.model.info(project)
-            if info["fingerprint"] != {key: model_info[key] for key in info["fingerprint"]}:
+            if info[constants.KEY_FINGERPRINT] != {
+                key: model_info[key] for key in info[constants.KEY_FINGERPRINT]
+            }:
                 raise ValueError("Index model changed; reindex this project before searching")
             vector = np.ascontiguousarray(
-                self.model.encode(project, [query], "query"), dtype=np.float32
+                self.model.encode(project, [query], constants.KEY_QUERY), dtype=np.float32
             )
             faiss.normalize_L2(vector)
             scores, ordinals = index.search(
@@ -401,48 +454,52 @@ class Engine:
                     for key, pattern in filters.items()
                 ):
                     continue
-                results.append({**chunk, "score": float(score)})
+                results.append({**chunk, constants.KEY_SCORE: float(score)})
                 if len(results) == k:
                     break
             return {
-                "project_path": project,
-                "generation": info["stats"]["generation"],
-                "results": results,
+                constants.KEY_PROJECT_PATH: project,
+                constants.KEY_GENERATION: info[constants.KEY_STATS][constants.KEY_GENERATION],
+                constants.KEY_RESULTS: results,
             }
         except Exception:
             failed = True
             raise
         finally:
             elapsed = time.monotonic() - start
-            with self.state.edit("search.completed", project) as value:
-                stats = value["projects"][project]
-                stats["searches"] += 1
-                stats["search_failures"] += int(failed)
-                stats["search_seconds"] = stats.get("search_seconds", 0) + elapsed
-                stats["last_search_seconds"] = elapsed
+            with self.state.edit(constants.EVENT_SEARCH_COMPLETED, project) as value:
+                stats = value[constants.KEY_PROJECTS][project]
+                stats[constants.KEY_SEARCHES] += 1
+                stats[constants.KEY_SEARCH_FAILURES] += int(failed)
+                stats[constants.KEY_SEARCH_SECONDS] = (
+                    stats.get(constants.KEY_SEARCH_SECONDS, 0) + elapsed
+                )
+                stats[constants.KEY_LAST_SEARCH_SECONDS] = elapsed
 
-    def similar(self, project, chunk_id, k=5):
+    def similar(self, project, chunk_id, k=constants.DEFAULT_SIMILAR_RESULTS):
         import numpy as np
 
         project = canonical_project(project, absolute=True)
         self.state.snapshot(project)
-        if not 1 <= k <= 100:
+        if not 1 <= k <= constants.MAX_SEARCH_RESULTS:
             raise ValueError("k must be between 1 and 100")
         generation = self._store(project).read()
         if generation is None:
             raise ValueError("Project has no committed index")
         index, chunks, info = generation
-        ordinal = next((i for i, chunk in enumerate(chunks) if chunk["chunk_id"] == chunk_id), None)
+        ordinal = next(
+            (i for i, chunk in enumerate(chunks) if chunk[constants.KEY_CHUNK_ID] == chunk_id), None
+        )
         if ordinal is None:
             raise KeyError(f"Unknown chunk in this project: {chunk_id}")
         scores, matches = index.search(
             np.asarray([index.reconstruct(ordinal)]), min(k + 1, len(chunks))
         )
         return {
-            "project_path": project,
-            "generation": info["stats"]["generation"],
-            "results": [
-                {**chunks[i], "score": float(score)}
+            constants.KEY_PROJECT_PATH: project,
+            constants.KEY_GENERATION: info[constants.KEY_STATS][constants.KEY_GENERATION],
+            constants.KEY_RESULTS: [
+                {**chunks[i], constants.KEY_SCORE: float(score)}
                 for score, i in zip(scores[0], matches[0])
                 if i != ordinal
             ][:k],
@@ -461,25 +518,25 @@ class Engine:
             store = self._store(project)
             previous = store.read()
             stats = {
-                "files": 0,
-                "files_scanned": 0,
-                "files_supported": 0,
-                "files_skipped": 0,
-                "chunks": 0,
-                "source_bytes": 0,
-                "cleared_at": utc_now(),
-                "watch_enabled": False,
+                constants.KEY_FILES: 0,
+                constants.KEY_FILES_SCANNED: 0,
+                constants.KEY_FILES_SUPPORTED: 0,
+                constants.KEY_FILES_SKIPPED: 0,
+                constants.KEY_CHUNKS: 0,
+                constants.KEY_SOURCE_BYTES: 0,
+                constants.KEY_CLEARED_AT: utc_now(),
+                constants.KEY_WATCH_ENABLED: False,
             }
             if previous:
                 stats = store.publish(
                     [],
                     np.empty((0, previous[0].d), dtype=np.float32),
                     {},
-                    {**previous[2]["stats"], **stats},
-                    previous[2]["fingerprint"],
+                    {**previous[2][constants.KEY_STATS], **stats},
+                    previous[2][constants.KEY_FINGERPRINT],
                 )
-            with self.state.edit("index.cleared", project) as value:
-                value["projects"][project].update(stats)
+            with self.state.edit(constants.EVENT_INDEX_CLEARED, project) as value:
+                value[constants.KEY_PROJECTS][project].update(stats)
             self.watch_reset.set()
             return self.state.snapshot(project)
 
@@ -490,21 +547,21 @@ class Engine:
             self.watch_reset.clear()
             roots = [
                 p
-                for p, stats in self.state.snapshot()["projects"].items()
-                if Path(p).is_dir() and stats.get("watch_enabled", True)
+                for p, stats in self.state.snapshot()[constants.KEY_PROJECTS].items()
+                if Path(p).is_dir() and stats.get(constants.KEY_WATCH_ENABLED, True)
             ]
             if not roots:
-                self.watch_reset.wait(1)
+                self.watch_reset.wait(constants.WATCH_IDLE_WAIT_SECONDS)
                 continue
             try:
                 reconcile = True
                 for changes in watch(
                     *roots,
                     stop_event=self.watch_reset,
-                    debounce=500,
-                    step=100,
+                    debounce=constants.WATCH_DEBOUNCE_MILLISECONDS,
+                    step=constants.WATCH_STEP_MILLISECONDS,
                     yield_on_timeout=True,
-                    rust_timeout=1000,
+                    rust_timeout=constants.WATCH_TIMEOUT_MILLISECONDS,
                 ):
                     touched = {
                         root
@@ -519,22 +576,25 @@ class Engine:
                     for root in touched:
                         with self.guard:
                             # Keep one pending reconciliation behind the currently running job.
-                            if len(self.queues[root]) < 2 and not self.closed:
-                                patterns = self.state.snapshot(root)["projects"][root].get(
-                                    "file_patterns"
-                                )
+                            if (
+                                len(self.queues[root]) < constants.WATCH_RECONCILIATION_QUEUE_LIMIT
+                                and not self.closed
+                            ):
+                                patterns = self.state.snapshot(root)[constants.KEY_PROJECTS][
+                                    root
+                                ].get(constants.KEY_FILE_PATTERNS)
                                 self.index(root, wait=False, file_patterns=patterns)
             except (OSError, RuntimeError):
                 log.exception("Watcher failed; reconciling registered roots")
-                self.watch_reset.wait(1)
+                self.watch_reset.wait(constants.WATCH_IDLE_WAIT_SECONDS)
                 for root in roots:
                     if not self.closed and Path(root).is_dir():
                         self.index(
                             root,
                             wait=False,
-                            file_patterns=self.state.snapshot(root)["projects"][root].get(
-                                "file_patterns"
-                            ),
+                            file_patterns=self.state.snapshot(root)[constants.KEY_PROJECTS][
+                                root
+                            ].get(constants.KEY_FILE_PATTERNS),
                         )
 
     def close(self):

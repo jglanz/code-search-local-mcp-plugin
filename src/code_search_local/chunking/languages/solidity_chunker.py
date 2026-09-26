@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, Set
 
+from code_search_local import constants
 from code_search_local.chunking.base_chunker import LanguageChunker
 
 
@@ -33,8 +34,7 @@ class SoliditySolChunker(LanguageChunker):
         "error_declaration",
     }
 
-    def __init__(self):
-        super().__init__("solidity")
+    LANGUAGE_NAME = constants.LANGUAGE_SOLIDITY
 
     def _get_splittable_node_types(self) -> Set[str]:
         return self._CONTAINER_NODES | self._MEMBER_NODES
@@ -45,43 +45,45 @@ class SoliditySolChunker(LanguageChunker):
         return self._CONTAINER_NODES
 
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
-        metadata: Dict[str, Any] = {"node_type": node.type}
+        metadata: Dict[str, Any] = {constants.KEY_NODE_TYPE: node.type}
 
         # Name: first identifier child for most node types. fallback_receive
         # nodes have no name (they're implicit `fallback`/`receive`); use the
         # leading keyword text as the name for clarity.
         name = None
         for child in node.children:
-            if child.type == "identifier":
+            if child.type == constants.SYNTAX_IDENTIFIER:
                 name = self.get_node_text(child, source)
                 break
-        if not name and node.type == "fallback_receive_definition":
+        if not name and node.type == constants.KEY_FALLBACK_RECEIVE_DEFINITION:
             # Grab the first leaf token (`fallback` or `receive`).
             head = node.children[0] if node.children else None
             if head is not None:
                 name = self.get_node_text(head, source)
-        if not name and node.type == "constructor_definition":
-            name = "constructor"
+        if not name and node.type == constants.KEY_CONSTRUCTOR_DEFINITION:
+            name = constants.SYNTAX_CONSTRUCTOR
         if name:
-            metadata["name"] = name
+            metadata[constants.KEY_NAME] = name
 
         # `abstract contract Foo` is still a contract_declaration; surface the
         # `abstract` modifier as a flag so the chunk metadata reflects it.
-        if node.type == "contract_declaration":
-            text_before_name = source[node.start_byte : node.start_byte + 64]
+        if node.type == constants.KEY_CONTRACT_DECLARATION:
+            text_before_name = source[
+                node.start_byte : node.start_byte + constants.SOLIDITY_DECLARATION_PREFIX_BYTES
+            ]
             if b"abstract" in text_before_name.split(b"contract", 1)[0]:
-                metadata["is_abstract"] = True
+                metadata[constants.KEY_IS_ABSTRACT] = True
 
         # Visibility / state mutability are sibling children of functions and
         # state variables; expose as semantic tags.
         for child in node.children:
-            if child.type == "visibility":
-                metadata["visibility"] = self.get_node_text(child, source)
-            elif child.type == "state_mutability":
-                metadata["state_mutability"] = self.get_node_text(child, source)
-            elif child.type == "virtual":
-                metadata["is_virtual"] = True
-            elif child.type == "override_specifier":
-                metadata["is_override"] = True
+            if child.type == constants.KEY_VISIBILITY:
+                metadata[constants.KEY_VISIBILITY] = self.get_node_text(child, source)
+            elif child.type == constants.KEY_STATE_MUTABILITY:
+                metadata[constants.KEY_STATE_MUTABILITY] = self.get_node_text(child, source)
+            elif child.type == constants.SYNTAX_VIRTUAL:
+                metadata[constants.KEY_IS_VIRTUAL] = True
+            elif child.type == constants.SYNTAX_OVERRIDE_SPECIFIER:
+                metadata[constants.KEY_IS_OVERRIDE] = True
 
         return metadata

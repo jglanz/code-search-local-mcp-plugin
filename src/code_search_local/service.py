@@ -6,46 +6,54 @@ import json
 import secrets
 from pathlib import Path
 
-from .config import canonical_project
+from code_search_local import constants
+
+from .config import canonical_project, loopback_hosts
 from .storage import atomic_json
 
 
 def token_for(root: Path, *, create=False):
-    path = root / "auth.json"
+    path = root / constants.PATH_AUTH_JSON
     if not path.exists():
         if not create:
             raise RuntimeError("Service is not configured; run code-search-local setup")
-        atomic_json(path, {"token": secrets.token_urlsafe(32)}, mode=0o600)
-    return json.loads(path.read_text())["token"]
+        atomic_json(
+            path,
+            {constants.KEY_TOKEN: secrets.token_urlsafe(constants.AUTH_TOKEN_BYTES)},
+            mode=constants.PRIVATE_FILE_MODE,
+        )
+    return json.loads(path.read_text())[constants.KEY_TOKEN]
 
 
 class LocalAuth:
     def __init__(self, app, settings, token):
         self.app, self.token = app, token
-        self.hosts = {
-            f"127.0.0.1:{settings.port}",
-            f"localhost:{settings.port}",
-            f"[::1]:{settings.port}",
-        }
-        self.origins = {"http://" + host for host in self.hosts}
+        self.hosts = set(loopback_hosts(settings.port))
+        self.origins = {constants.HTTP_SCHEME + host for host in self.hosts}
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
+        if scope[constants.KEY_TYPE] != constants.TRANSPORT_HTTP:
             return await self.app(scope, receive, send)
         from starlette.responses import JSONResponse
 
-        headers = {key.decode().lower(): value.decode() for key, value in scope["headers"]}
-        if headers.get("host") not in self.hosts or (
-            headers.get("origin") and headers["origin"] not in self.origins
+        headers = {
+            key.decode().lower(): value.decode() for key, value in scope[constants.KEY_HEADERS]
+        }
+        if headers.get(constants.KEY_HOST) not in self.hosts or (
+            headers.get(constants.KEY_ORIGIN) and headers[constants.KEY_ORIGIN] not in self.origins
         ):
-            return await JSONResponse({"error": "Invalid Host or Origin"}, status_code=403)(
-                scope, receive, send
-            )
-        expected = "Bearer " + self.token
-        if not hmac.compare_digest(headers.get("authorization", ""), expected):
-            return await JSONResponse({"error": "Unauthorized"}, status_code=401)(
-                scope, receive, send
-            )
+            return await JSONResponse(
+                {constants.KEY_ERROR: "Invalid Host or Origin"},
+                status_code=constants.HTTP_FORBIDDEN,
+            )(scope, receive, send)
+        expected = constants.HTTP_BEARER + self.token
+        if not hmac.compare_digest(
+            headers.get(constants.KEY_AUTHORIZATION_LOWERCASE, ""), expected
+        ):
+            return await JSONResponse(
+                {constants.KEY_ERROR: constants.TOKEN_UNAUTHORIZED},
+                status_code=constants.HTTP_UNAUTHORIZED,
+            )(scope, receive, send)
         return await self.app(scope, receive, send)
 
 
@@ -54,7 +62,7 @@ def create_app(engine, token):
     from starlette.responses import JSONResponse
 
     mcp = FastMCP(
-        "code-search-local",
+        constants.APPLICATION_NAME,
         instructions=(
             "Use these tools for local code indexing, semantic code search and index diagnostics. "
             "For requests such as 'Index code', 'Index codebase' or 'Update index', call "
@@ -72,7 +80,11 @@ def create_app(engine, token):
 
     @mcp.tool(
         title="Index or update a codebase",
-        annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+        annotations={
+            constants.KEY_READ_ONLY_HINT: False,
+            constants.KEY_DESTRUCTIVE_HINT: False,
+            constants.KEY_IDEMPOTENT_HINT: False,
+        },
     )
     async def index_directory(
         directory_path: str,
@@ -114,7 +126,7 @@ def create_app(engine, token):
 
     @mcp.tool(
         title="Check indexing job progress",
-        annotations={"readOnlyHint": True, "openWorldHint": False},
+        annotations={constants.KEY_READ_ONLY_HINT: True, constants.KEY_OPEN_WORLD_HINT: False},
     )
     async def get_index_job(project_path: str, job_id: str) -> dict:
         """Check a particular indexing request without submitting another job.
@@ -135,10 +147,10 @@ def create_app(engine, token):
     @mcp.tool(
         title="Cancel an indexing job",
         annotations={
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
+            constants.KEY_READ_ONLY_HINT: False,
+            constants.KEY_DESTRUCTIVE_HINT: False,
+            constants.KEY_IDEMPOTENT_HINT: True,
+            constants.KEY_OPEN_WORLD_HINT: False,
         },
     )
     async def cancel_index_job(project_path: str, job_id: str) -> dict:
@@ -156,9 +168,12 @@ def create_app(engine, token):
         """
         return engine.cancel(project_path, job_id)
 
-    @mcp.tool(title="Search code by meaning", annotations={"readOnlyHint": True})
+    @mcp.tool(title="Search code by meaning", annotations={constants.KEY_READ_ONLY_HINT: True})
     async def search_code(
-        project_path: str, query: str, k: int = 10, filters: dict[str, str] | None = None
+        project_path: str,
+        query: str,
+        k: int = constants.DEFAULT_SEARCH_RESULTS,
+        filters: dict[str, str] | None = None,
     ) -> dict:
         """Find relevant functions, classes and code passages in one indexed codebase.
 
@@ -182,7 +197,7 @@ def create_app(engine, token):
 
     @mcp.tool(
         title="Show index and model statistics",
-        annotations={"readOnlyHint": True, "openWorldHint": False},
+        annotations={constants.KEY_READ_ONLY_HINT: True, constants.KEY_OPEN_WORLD_HINT: False},
     )
     async def get_index_stats(project_path: str | None = None) -> dict:
         """Report index, cache, change-detection and shared model usage statistics.
@@ -203,7 +218,7 @@ def create_app(engine, token):
 
     @mcp.tool(
         title="Check a project's index status",
-        annotations={"readOnlyHint": True, "openWorldHint": False},
+        annotations={constants.KEY_READ_ONLY_HINT: True, constants.KEY_OPEN_WORLD_HINT: False},
     )
     async def get_index_status(project_path: str) -> dict:
         """Inspect whether a project's index is ready and which indexing jobs it has.
@@ -222,9 +237,11 @@ def create_app(engine, token):
 
     @mcp.tool(
         title="Find code similar to a search result",
-        annotations={"readOnlyHint": True, "openWorldHint": False},
+        annotations={constants.KEY_READ_ONLY_HINT: True, constants.KEY_OPEN_WORLD_HINT: False},
     )
-    async def find_similar_code(project_path: str, chunk_id: str, k: int = 5) -> dict:
+    async def find_similar_code(
+        project_path: str, chunk_id: str, k: int = constants.DEFAULT_SIMILAR_RESULTS
+    ) -> dict:
         """Find code passages similar to an existing indexed chunk in the same project.
 
         Call for "Find similar code", "Where else is this pattern used?", or "Find related
@@ -243,7 +260,11 @@ def create_app(engine, token):
 
     @mcp.tool(
         title="Clear a project's search index",
-        annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+        annotations={
+            constants.KEY_READ_ONLY_HINT: False,
+            constants.KEY_DESTRUCTIVE_HINT: True,
+            constants.KEY_OPEN_WORLD_HINT: False,
+        },
     )
     async def clear_index(project_path: str) -> dict:
         """Discard one project's searchable index and pause automatic indexing for that project.
@@ -262,7 +283,8 @@ def create_app(engine, token):
         return await asyncio.to_thread(engine.clear, project_path)
 
     @mcp.tool(
-        title="List indexed projects", annotations={"readOnlyHint": True, "openWorldHint": False}
+        title="List indexed projects",
+        annotations={constants.KEY_READ_ONLY_HINT: True, constants.KEY_OPEN_WORLD_HINT: False},
     )
     async def list_projects() -> dict:
         """Discover project roots registered with this shared service.
@@ -274,17 +296,17 @@ def create_app(engine, token):
         does not mean indexing succeeded: inspect get_index_status for readiness. This does not
         scan the filesystem for new repositories; register a new workspace with index_directory.
         """
-        return engine.state.snapshot()["projects"]
+        return engine.state.snapshot()[constants.KEY_PROJECTS]
 
-    @mcp.resource("code-search-local://stats")
+    @mcp.resource(constants.STATS_RESOURCE_URI)
     async def stats_resource() -> str:
         return json.dumps(engine.state.snapshot())
 
-    @mcp.resource("code-search-local://stats/{project_id}")
+    @mcp.resource(constants.PROJECT_STATS_RESOURCE_URI)
     async def project_resource(project_id: str) -> str:
         from .storage import project_id as identify
 
-        for project in engine.state.snapshot()["projects"]:
+        for project in engine.state.snapshot()[constants.KEY_PROJECTS]:
             if identify(project) == project_id:
                 return json.dumps(engine.state.snapshot(project))
         raise ValueError("Unknown project ID")
@@ -294,61 +316,68 @@ def create_app(engine, token):
             value = await call()
             return JSONResponse(value)
         except (ValueError, KeyError, TypeError, RuntimeError) as error:
-            return JSONResponse({"error": str(error)}, status_code=400)
+            return JSONResponse(
+                {constants.KEY_ERROR: str(error)}, status_code=constants.HTTP_BAD_REQUEST
+            )
 
-    @mcp.custom_route("/api/v1/model", methods=["POST"])
+    @mcp.custom_route(constants.MODEL_ENDPOINT, methods=[constants.HTTP_POST])
     async def warmup(request):
-        return await respond(lambda: asyncio.to_thread(engine.model.info, "__shared__"))
+        return await respond(
+            lambda: asyncio.to_thread(engine.model.info, constants.SHARED_MODEL_OWNER)
+        )
 
-    @mcp.custom_route("/api/v1/stats", methods=["GET"])
+    @mcp.custom_route(constants.STATS_ENDPOINT, methods=[constants.HTTP_GET])
     async def stats(request):
         async def call():
-            path = request.query_params.get("project")
+            path = request.query_params.get(constants.KEY_PROJECT)
             project = canonical_project(path, absolute=True) if path else None
             return engine.state.snapshot(project)
 
         return await respond(call)
 
-    @mcp.custom_route("/api/v1/index", methods=["POST"])
+    @mcp.custom_route(constants.INDEX_ENDPOINT, methods=[constants.HTTP_POST])
     async def index(request):
         async def call():
             data = await request.json()
-            directory = data.pop("directory_path")
+            directory = data.pop(constants.KEY_DIRECTORY_PATH)
             return await asyncio.to_thread(engine.index, directory, **data)
 
         return await respond(call)
 
-    @mcp.custom_route("/api/v1/search", methods=["POST"])
+    @mcp.custom_route(constants.SEARCH_ENDPOINT, methods=[constants.HTTP_POST])
     async def search(request):
         async def call():
             data = await request.json()
-            project = data.pop("project_path")
-            query = data.pop("query")
+            project = data.pop(constants.KEY_PROJECT_PATH)
+            query = data.pop(constants.KEY_QUERY)
             return await asyncio.to_thread(engine.search, project, query, **data)
 
         return await respond(call)
 
-    @mcp.custom_route("/api/v1/jobs/{job_id}", methods=["GET", "DELETE"])
+    @mcp.custom_route(
+        constants.JOB_ENDPOINT_TEMPLATE, methods=[constants.HTTP_GET, constants.HTTP_DELETE]
+    )
     async def job(request):
         async def call():
-            project = request.query_params["project"]
-            method = engine.cancel if request.method == "DELETE" else engine.job
-            return method(project, request.path_params["job_id"])
+            project = request.query_params[constants.KEY_PROJECT]
+            method = engine.cancel if request.method == constants.HTTP_DELETE else engine.job
+            return method(project, request.path_params[constants.KEY_JOB_ID])
 
         return await respond(call)
 
-    @mcp.custom_route("/api/v1/health", methods=["GET"])
+    @mcp.custom_route(constants.HEALTH_ENDPOINT, methods=[constants.HTTP_GET])
     async def health(request):
-        return JSONResponse({"status": "ok", "daemon_id": engine.state.snapshot()["daemon_id"]})
+        return JSONResponse(
+            {
+                constants.KEY_STATUS: constants.STATUS_OK,
+                constants.KEY_DAEMON_ID: engine.state.snapshot()[constants.KEY_DAEMON_ID],
+            }
+        )
 
     app = mcp.http_app(
-        path="/mcp",
+        path=constants.MCP_ENDPOINT,
         stateless_http=True,
-        allowed_hosts=[
-            f"127.0.0.1:{engine.settings.port}",
-            f"localhost:{engine.settings.port}",
-            f"[::1]:{engine.settings.port}",
-        ],
+        allowed_hosts=loopback_hosts(engine.settings.port),
     )
     return LocalAuth(app, engine.settings, token)
 
@@ -365,7 +394,7 @@ def serve(settings):
         publisher = Publisher(ipc_address(settings.root), engine.state.snapshot)
         engine.state.publish = publisher.publish
         app = create_app(engine, token_for(settings.root, create=True))
-        uvicorn.run(app, host=settings.host, port=settings.port, workers=1)
+        uvicorn.run(app, host=settings.host, port=settings.port, workers=constants.DAEMON_WORKERS)
     finally:
         if publisher:
             publisher.close()

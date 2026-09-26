@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from code_search_local import constants
+
 
 @dataclass
 class CodeChunk:
@@ -41,4 +43,6 @@ class CodeChunk:
         # Extract folder structure from path
         if self.file_path and not self.folder_structure:
             path_parts = Path(self.relative_path).parent.parts
-            self.folder_structure = list(path_parts) if path_parts != (".",) else []
+            self.folder_structure = (
+                list(path_parts) if path_parts != (constants.KEY_PROJECT_ROOT,) else []
+            )

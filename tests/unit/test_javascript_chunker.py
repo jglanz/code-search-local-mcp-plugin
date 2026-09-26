@@ -2,6 +2,7 @@
 
 import pytest
 
+from code_search_local import constants
 from code_search_local.chunking.languages import JavaScriptChunker
 
 
@@ -49,8 +50,8 @@ class MyClass {
 
         # Verify structure
         for chunk in chunks:
-            assert hasattr(chunk, "node_type"), "Chunk should have node_type"
-            assert hasattr(chunk, "content"), "Chunk should have content"
+            assert hasattr(chunk, constants.KEY_NODE_TYPE), "Chunk should have node_type"
+            assert hasattr(chunk, constants.KEY_CONTENT), "Chunk should have content"
 
     def test_arrow_function_detection(self):
         """Test detection of arrow functions specifically."""

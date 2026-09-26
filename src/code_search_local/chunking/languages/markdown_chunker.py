@@ -1,7 +1,8 @@
 """Markdown-specific tree-sitter based chunker."""
 
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
+from code_search_local import constants
 from code_search_local.chunking.base_chunker import LanguageChunker, TreeSitterChunk
 
 
@@ -12,49 +13,47 @@ class MarkdownChunker(LanguageChunker):
     Each section includes a header and all content until the next header.
     """
 
-    def __init__(self):
-        super().__init__("markdown")
+    LANGUAGE_NAME = constants.LANGUAGE_MARKDOWN
 
-    def _get_splittable_node_types(self) -> Set[str]:
-        """Markdown-specific splittable node types."""
-        return {
-            "section",  # Markdown sections
-            "atx_heading",  # Headers like # Title, ## Subtitle
-        }
+    SPLITTABLE_NODE_TYPES = frozenset({constants.KEY_SECTION, constants.SYNTAX_ATX_HEADING})
 
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
         """Extract Markdown-specific metadata."""
-        metadata = {"node_type": node.type}
+        metadata = {constants.KEY_NODE_TYPE: node.type}
 
         # Extract heading text and level
-        if node.type == "atx_heading":
+        if node.type == constants.SYNTAX_ATX_HEADING:
             # Get the heading level (count of # characters)
             heading_text = self.get_node_text(node, source).strip()
             level = 0
             for char in heading_text:
-                if char == "#":
+                if char == constants.MARKDOWN_HEADING_MARKER:
                     level += 1
                 else:
                     break
 
-            metadata["heading_level"] = level
-            metadata["name"] = heading_text.lstrip("#").strip()
-            metadata["type"] = "heading"
+            metadata[constants.KEY_HEADING_LEVEL] = level
+            metadata[constants.KEY_NAME] = heading_text.lstrip(
+                constants.MARKDOWN_HEADING_MARKER
+            ).strip()
+            metadata[constants.KEY_TYPE] = constants.SYNTAX_HEADING
 
-        elif node.type == "section":
+        elif node.type == constants.KEY_SECTION:
             # Extract section information
             # Find the heading within the section
             for child in node.children:
-                if child.type == "atx_heading":
+                if child.type == constants.SYNTAX_ATX_HEADING:
                     heading_text = self.get_node_text(child, source).strip()
                     level = heading_text.count(
-                        "#",
+                        constants.MARKDOWN_HEADING_MARKER,
                         0,
                         heading_text.index(" ") if " " in heading_text else len(heading_text),
                     )
-                    metadata["heading_level"] = level
-                    metadata["name"] = heading_text.lstrip("#").strip()
-                    metadata["type"] = "section"
+                    metadata[constants.KEY_HEADING_LEVEL] = level
+                    metadata[constants.KEY_NAME] = heading_text.lstrip(
+                        constants.MARKDOWN_HEADING_MARKER
+                    ).strip()
+                    metadata[constants.KEY_TYPE] = constants.KEY_SECTION
                     break
 
         return metadata
@@ -68,7 +67,7 @@ class MarkdownChunker(LanguageChunker):
         Returns:
             List of TreeSitterChunk objects
         """
-        source_bytes = bytes(source_code, "utf-8")
+        source_bytes = bytes(source_code, constants.TEXT_ENCODING)
         tree = self.parser.parse(source_bytes)
         chunks = []
 
@@ -78,7 +77,7 @@ class MarkdownChunker(LanguageChunker):
             if headings is None:
                 headings = []
 
-            if node.type == "atx_heading":
+            if node.type == constants.SYNTAX_ATX_HEADING:
                 headings.append(node)
 
             for child in node.children:
@@ -96,9 +95,12 @@ class MarkdownChunker(LanguageChunker):
                         content=source_code,
                         start_line=1,
                         end_line=len(source_code.split("\n")),
-                        node_type="document",
+                        node_type=constants.KEY_DOCUMENT,
                         language=self.language_name,
-                        metadata={"type": "document", "name": "Document"},
+                        metadata={
+                            constants.KEY_TYPE: constants.KEY_DOCUMENT,
+                            constants.KEY_NAME: constants.SYNTAX_DOCUMENT,
+                        },
                     )
                 )
             return chunks
@@ -124,21 +126,25 @@ class MarkdownChunker(LanguageChunker):
             heading_text = self.get_node_text(heading_node, source_bytes).strip()
             level = 0
             for char in heading_text:
-                if char == "#":
+                if char == constants.MARKDOWN_HEADING_MARKER:
                     level += 1
                 else:
                     break
 
-            heading_name = heading_text.lstrip("#").strip()
+            heading_name = heading_text.lstrip(constants.MARKDOWN_HEADING_MARKER).strip()
 
             # Create chunk
             chunk = TreeSitterChunk(
                 content=content,
                 start_line=start_line,
                 end_line=end_line,
-                node_type="section",
+                node_type=constants.KEY_SECTION,
                 language=self.language_name,
-                metadata={"name": heading_name, "heading_level": level, "type": "section"},
+                metadata={
+                    constants.KEY_NAME: heading_name,
+                    constants.KEY_HEADING_LEVEL: level,
+                    constants.KEY_TYPE: constants.KEY_SECTION,
+                },
             )
             chunks.append(chunk)
 
@@ -153,9 +159,12 @@ class MarkdownChunker(LanguageChunker):
                     content=preamble_content,
                     start_line=1,
                     end_line=first_heading_line - 1,
-                    node_type="preamble",
+                    node_type=constants.KEY_PREAMBLE,
                     language=self.language_name,
-                    metadata={"name": "Preamble", "type": "preamble"},
+                    metadata={
+                        constants.KEY_NAME: constants.SYNTAX_PREAMBLE,
+                        constants.KEY_TYPE: constants.KEY_PREAMBLE,
+                    },
                 )
                 # Insert at beginning
                 chunks.insert(0, preamble_chunk)

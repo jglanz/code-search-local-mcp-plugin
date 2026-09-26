@@ -8,15 +8,24 @@ from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Footer, Header, Static
 
+from code_search_local import constants
+
 
 def report(snapshot):
     table = Table(
-        title="Code Search Local — " + ("online" if snapshot.get("online") else "offline snapshot"),
+        title="Code Search Local — "
+        + (constants.KEY_ONLINE if snapshot.get(constants.KEY_ONLINE) else "offline snapshot"),
         expand=True,
     )
-    table.add_column("Scope", style="cyan", overflow="fold")
-    table.add_column("Statistic", style="bold", overflow="fold")
-    table.add_column("Value", overflow="fold")
+    table.add_column(
+        constants.TOKEN_SCOPE, style=constants.TUI_STYLE_CYAN, overflow=constants.TUI_CELL_OVERFLOW
+    )
+    table.add_column(
+        constants.TOKEN_STATISTIC,
+        style=constants.TUI_STYLE_BOLD,
+        overflow=constants.TUI_CELL_OVERFLOW,
+    )
+    table.add_column(constants.TOKEN_VALUE, overflow=constants.TUI_CELL_OVERFLOW)
 
     def rows(scope, values, prefix=""):
         for key, value in values.items():
@@ -32,17 +41,17 @@ def report(snapshot):
                 table.add_row(Text(scope), Text(name), Text(rendered))
 
     rows(
-        "Service",
+        constants.TOKEN_SERVICE,
         {
             key: value
             for key, value in snapshot.items()
-            if key not in ("projects", "jobs", "shared")
+            if key not in (constants.KEY_PROJECTS, constants.KEY_JOBS, constants.KEY_SHARED)
         },
     )
-    rows("Shared model", snapshot.get("shared", {}))
-    for project, stats in snapshot.get("projects", {}).items():
+    rows("Shared model", snapshot.get(constants.KEY_SHARED, {}))
+    for project, stats in snapshot.get(constants.KEY_PROJECTS, {}).items():
         rows(project, stats)
-    for job, stats in snapshot.get("jobs", {}).items():
+    for job, stats in snapshot.get(constants.KEY_JOBS, {}).items():
         rows("Job " + job, stats)
     return table
 
@@ -60,7 +69,7 @@ class StatsApp(App):
         if self.subscriber:
             yield Header()
         with VerticalScroll():
-            yield Static(report(self.snapshot), id="report")
+            yield Static(report(self.snapshot), id=constants.REPORT_WIDGET_ID)
         if self.subscriber:
             yield Footer()
 
@@ -76,4 +85,8 @@ class StatsApp(App):
                 self.snapshot = snapshot
                 self.query_one("#report", Static).update(report(snapshot))
         except (OSError, RuntimeError) as error:
-            self.notify(str(error), severity="error", timeout=10)
+            self.notify(
+                str(error),
+                severity=constants.KEY_ERROR,
+                timeout=constants.TUI_ERROR_TIMEOUT_SECONDS,
+            )

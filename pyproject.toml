@@ -19,6 +19,7 @@ dependencies = [
   "tomlkit==0.15.1",
   "json5==0.15.0",
   "uv==0.12.18",
+  "pylint>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -34,9 +35,16 @@ rocm = ["torch==2.14.0", "rocm[device-all,libraries]==7.14.1; sys_platform == 'l
 
 [dependency-groups]
 dev = [
-  "build==1.6.1", "pytest==9.1.1", "pytest-asyncio==1.4.0",
-  "pytest-cov==7.1.0", "coverage==7.16.1",
-  "ruff==0.16.8", "pipx==1.17.6", "httpx2==2.13.1", "hatch==1.18.1",
+  "build==1.6.1",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov==7.1.0",
+  "coverage==7.16.1",
+  "ruff==0.16.8",
+  "pipx==1.17.6",
+  "httpx2==2.13.1",
+  "hatch==1.18.1",
+  "pylint==4.0.9",
 ]
 
 [project.scripts]
@@ -51,7 +59,7 @@ path = "src/code_search_local/__init__.py"
 [tool.hatch.build.targets.sdist]
 include = [
   "/src/", "/plugins/", "/.claude-plugin/", "/scripts/", "/tests/", "/docs/",
-  "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/CLAUDE.md", "/.gitignore",
+  "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/CLAUDE.md", "/AGENTS.md", "/.agents/rules/", "/.gitignore",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -84,7 +92,11 @@ coverage = [
   "test --cov --cov-report=json:coverage.json {args:tests}",
   "python scripts/check_coverage.py",
 ]
-lint = "ruff check --select F,I {args:src scripts tests}"
+lint = [
+  "ruff check --select F,I {args:src scripts tests}",
+  "python scripts/check_code_rules.py",
+]
+rules = "python scripts/check_code_rules.py"
 fmt = "ruff format {args:src scripts tests}"
 
 [tool.hatch.envs.cpu]

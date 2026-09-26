@@ -1,18 +1,16 @@
 """Test suite for AST-based chunking functionality."""
 
-import os
-import tempfile
-
 import pytest
 
-from code_search_local.chunking.multi_language_chunker import MultiLanguageChunker
+from code_search_local import constants
+from tests.helpers import chunk_sample
 
 
 @pytest.mark.integration
 class TestChunking:
     """Test suite for AST-based chunking functionality."""
 
-    def test_chunking(self):
+    def test_chunking(self, tmp_path):
         """Test AST-based chunking of Python code."""
         # Create a more complex test Python file
         test_code = '''
@@ -90,38 +88,27 @@ def get_user_profile(user_id: int) -> Dict:
     return profiles[0]
 '''
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(test_code)
-            f.flush()
+        chunks = chunk_sample(tmp_path, test_code)
 
-            try:
-                # Test chunking
-                chunker = MultiLanguageChunker(os.path.dirname(f.name))
-                chunks = chunker.chunk_file(f.name)
+        assert len(chunks) > 0, "Should generate at least one chunk"
+        # Note: Minimum chunks may vary based on chunking strategy
 
-                # Assertions
-                assert len(chunks) > 0, "Should generate at least one chunk"
-                # Note: Minimum chunks may vary based on chunking strategy
+        # Check chunk structure
+        for chunk in chunks:
+            # Validate chunk attributes
+            assert hasattr(chunk, "chunk_type"), "Chunk should have chunk_type"
+            assert hasattr(chunk, constants.KEY_START_LINE), "Chunk should have start_line"
+            assert hasattr(chunk, constants.KEY_END_LINE), "Chunk should have end_line"
+            assert hasattr(chunk, constants.KEY_CONTENT), "Chunk should have content"
+            assert hasattr(chunk, "tags"), "Chunk should have tags"
 
-                # Check chunk structure
-                for chunk in chunks:
-                    # Validate chunk attributes
-                    assert hasattr(chunk, "chunk_type"), "Chunk should have chunk_type"
-                    assert hasattr(chunk, "start_line"), "Chunk should have start_line"
-                    assert hasattr(chunk, "end_line"), "Chunk should have end_line"
-                    assert hasattr(chunk, "content"), "Chunk should have content"
-                    assert hasattr(chunk, "tags"), "Chunk should have tags"
+            assert chunk.start_line > 0, "Start line should be positive"
+            assert chunk.end_line >= chunk.start_line, "End line should be >= start line"
+            assert isinstance(chunk.tags, (list, set)), "Tags should be a list or set"
+            assert isinstance(chunk.content, str), "Content should be a string"
+            assert len(chunk.content) > 0, "Content should not be empty"
 
-                    assert chunk.start_line > 0, "Start line should be positive"
-                    assert chunk.end_line >= chunk.start_line, "End line should be >= start line"
-                    assert isinstance(chunk.tags, (list, set)), "Tags should be a list or set"
-                    assert isinstance(chunk.content, str), "Content should be a string"
-                    assert len(chunk.content) > 0, "Content should not be empty"
-
-            finally:
-                os.unlink(f.name)
-
-    def test_chunking_with_decorators(self):
+    def test_chunking_with_decorators(self, tmp_path):
         """Test that decorators are captured in chunks."""
         test_code = '''
 @login_required
@@ -136,19 +123,10 @@ def expensive_property(self):
     return compute_something()
 '''
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(test_code)
-            f.flush()
+        chunks = chunk_sample(tmp_path, test_code)
 
-            try:
-                chunker = MultiLanguageChunker(os.path.dirname(f.name))
-                chunks = chunker.chunk_file(f.name)
+        assert len(chunks) > 0, "Should generate chunks with decorators"
 
-                assert len(chunks) > 0, "Should generate chunks with decorators"
-
-                # Check that decorators are captured
-                has_decorators = any(chunk.decorators for chunk in chunks)
-                assert has_decorators, "At least one chunk should have decorators"
-
-            finally:
-                os.unlink(f.name)
+        # Check that decorators are captured
+        has_decorators = any(chunk.decorators for chunk in chunks)
+        assert has_decorators, "At least one chunk should have decorators"

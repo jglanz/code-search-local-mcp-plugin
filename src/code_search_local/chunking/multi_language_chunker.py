@@ -4,9 +4,11 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
+from code_search_local import constants
 from code_search_local.chunking.code_chunk import CodeChunk
 from code_search_local.chunking.languages import LANGUAGE_MAP
 from code_search_local.chunking.tree_sitter import TreeSitterChunk, TreeSitterChunker
+from code_search_local.filesystem import default_ignore_patterns
 from code_search_local.merkle.merkle_dag import load_pathspec
 
 logger = logging.getLogger(__name__)
@@ -19,54 +21,7 @@ class MultiLanguageChunker:
     SUPPORTED_EXTENSIONS = set(LANGUAGE_MAP.keys())
 
     # Common large/build/tooling directories to skip during traversal
-    DEFAULT_IGNORED_DIRS = {
-        "__pycache__",
-        ".git",
-        ".hg",
-        ".svn",
-        ".venv",
-        ".venvs",
-        "venv",
-        "env",
-        ".env",
-        ".direnv",
-        "node_modules",
-        ".pnpm-store",
-        ".yarn",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".pytype",
-        ".ipynb_checkpoints",
-        "build",
-        "dist",
-        "out",
-        "public",
-        ".next",
-        ".nuxt",
-        ".svelte-kit",
-        ".angular",
-        ".astro",
-        ".vite",
-        ".cache",
-        ".parcel-cache",
-        ".turbo",
-        "coverage",
-        ".coverage",
-        ".nyc_output",
-        ".gradle",
-        ".idea",
-        ".vscode",
-        ".docusaurus",
-        ".vercel",
-        ".serverless",
-        ".terraform",
-        ".mvn",
-        ".tox",
-        "target",
-        "bin",
-        "obj",
-    }
+    DEFAULT_IGNORED_DIRS = default_ignore_patterns()
 
     def __init__(self, root_path: Optional[str] = None):
         """Initialize multi-language chunker.
@@ -78,7 +33,7 @@ class MultiLanguageChunker:
         # Use AST chunker for Python (more mature implementation)
         # Use tree-sitter for other languages
         self.tree_sitter_chunker = TreeSitterChunker()
-        # Project-level ignore (.claude-context-ignore) for chunk_directory()
+        # Project-level ignore (.code-search-ignore) for chunk_directory()
         self.pathspec = load_pathspec(Path(root_path)) if root_path else None
 
     def is_supported(self, file_path: str) -> bool:
@@ -131,67 +86,67 @@ class MultiLanguageChunker:
 
         for tchunk in tree_chunks:
             # Extract metadata
-            name = tchunk.metadata.get("name")
-            docstring = tchunk.metadata.get("docstring")
-            decorators = tchunk.metadata.get("decorators", [])
+            name = tchunk.metadata.get(constants.KEY_NAME)
+            docstring = tchunk.metadata.get(constants.KEY_DOCSTRING)
+            decorators = tchunk.metadata.get(constants.KEY_DECORATORS, [])
 
             # Map tree-sitter node types to our chunk types
             chunk_type_map = {
-                "function_declaration": "function",
-                "function_definition": "function",
-                "arrow_function": "function",
-                "function": "function",
-                "function_item": "function",  # Rust
-                "method_declaration": "method",  # Go, Java
-                "method_definition": "method",
-                "class_declaration": "class",
-                "class_definition": "class",
-                "class_specifier": "class",  # C++
-                "interface_declaration": "interface",
-                "type_alias_declaration": "type",
-                "type_declaration": "type",  # Go
-                "enum_declaration": "enum",
-                "enum_specifier": "enum",  # C
-                "enum_item": "enum",  # Rust
-                "struct_declaration": "struct",  # C#
-                "struct_specifier": "struct",  # C/C++
-                "struct_item": "struct",  # Rust
-                "union_specifier": "union",  # C/C++
-                "namespace_definition": "namespace",  # C++
-                "namespace_declaration": "namespace",  # C#
-                "impl_item": "impl",  # Rust
-                "trait_item": "trait",  # Rust
-                "mod_item": "module",  # Rust
-                "macro_definition": "macro",  # Rust
-                "constructor_declaration": "constructor",  # Java/C#
-                "destructor_declaration": "destructor",  # C#
-                "property_declaration": "property",  # C#
-                "event_declaration": "event",  # C#
-                "template_declaration": "template",  # C++
-                "concept_definition": "concept",  # C++
-                "annotation_type_declaration": "annotation",  # Java
-                "script_element": "script",  # Svelte
-                "style_element": "style",  # Svelte
-                "section": "section",  # Markdown
-                "preamble": "preamble",  # Markdown
-                "document": "document",  # Markdown
-                "contract_declaration": "contract",  # Solidity
-                "library_declaration": "library",  # Solidity
-                "modifier_definition": "modifier",  # Solidity
-                "constructor_definition": "constructor",  # Solidity
-                "fallback_receive_definition": "function",  # Solidity (fallback/receive)
-                "event_definition": "event",  # Solidity
-                "error_declaration": "error",  # Solidity
+                constants.KEY_FUNCTION_DECLARATION: constants.KEY_FUNCTION,
+                constants.KEY_FUNCTION_DEFINITION: constants.KEY_FUNCTION,
+                constants.KEY_ARROW_FUNCTION: constants.KEY_FUNCTION,
+                constants.KEY_FUNCTION: constants.KEY_FUNCTION,
+                constants.KEY_FUNCTION_ITEM: constants.KEY_FUNCTION,  # Rust
+                constants.KEY_METHOD_DECLARATION: constants.SYNTAX_METHOD,  # Go, Java
+                constants.KEY_METHOD_DEFINITION: constants.SYNTAX_METHOD,
+                constants.KEY_CLASS_DECLARATION: constants.SYNTAX_CLASS,
+                constants.KEY_CLASS_DEFINITION: constants.SYNTAX_CLASS,
+                constants.KEY_CLASS_SPECIFIER: constants.SYNTAX_CLASS,  # C++
+                constants.KEY_INTERFACE_DECLARATION: constants.SYNTAX_INTERFACE,
+                constants.KEY_TYPE_ALIAS_DECLARATION: constants.KEY_TYPE,
+                constants.KEY_TYPE_DECLARATION: constants.KEY_TYPE,  # Go
+                constants.KEY_ENUM_DECLARATION: constants.SYNTAX_ENUM,
+                constants.KEY_ENUM_SPECIFIER: constants.SYNTAX_ENUM,  # C
+                constants.KEY_ENUM_ITEM: constants.SYNTAX_ENUM,  # Rust
+                constants.KEY_STRUCT_DECLARATION: constants.SYNTAX_STRUCT,  # C#
+                constants.KEY_STRUCT_SPECIFIER: constants.SYNTAX_STRUCT,  # C/C++
+                constants.KEY_STRUCT_ITEM: constants.SYNTAX_STRUCT,  # Rust
+                constants.KEY_UNION_SPECIFIER: constants.SYNTAX_UNION,  # C/C++
+                constants.KEY_NAMESPACE_DEFINITION: constants.SYNTAX_NAMESPACE,  # C++
+                constants.KEY_NAMESPACE_DECLARATION: constants.SYNTAX_NAMESPACE,  # C#
+                constants.KEY_IMPL_ITEM: constants.SYNTAX_IMPL,  # Rust
+                constants.KEY_TRAIT_ITEM: constants.SYNTAX_TRAIT,  # Rust
+                constants.KEY_MOD_ITEM: constants.SYNTAX_MODULE,  # Rust
+                constants.KEY_MACRO_DEFINITION: constants.SYNTAX_MACRO,  # Rust
+                constants.KEY_CONSTRUCTOR_DECLARATION: constants.SYNTAX_CONSTRUCTOR,  # Java/C#
+                constants.KEY_DESTRUCTOR_DECLARATION: constants.SYNTAX_DESTRUCTOR,  # C#
+                constants.KEY_PROPERTY_DECLARATION: constants.SYNTAX_PROPERTY,  # C#
+                constants.KEY_EVENT_DECLARATION: constants.SYNTAX_EVENT,  # C#
+                constants.KEY_TEMPLATE_DECLARATION: constants.SYNTAX_TEMPLATE,  # C++
+                constants.KEY_CONCEPT_DEFINITION: constants.SYNTAX_CONCEPT,  # C++
+                constants.KEY_ANNOTATION_TYPE_DECLARATION: constants.SYNTAX_ANNOTATION,  # Java
+                constants.KEY_SCRIPT_ELEMENT: constants.SYNTAX_SCRIPT,  # Svelte
+                constants.KEY_STYLE_ELEMENT: constants.SYNTAX_STYLE,  # Svelte
+                constants.KEY_SECTION: constants.KEY_SECTION,  # Markdown
+                constants.KEY_PREAMBLE: constants.KEY_PREAMBLE,  # Markdown
+                constants.KEY_DOCUMENT: constants.KEY_DOCUMENT,  # Markdown
+                constants.KEY_CONTRACT_DECLARATION: constants.SYNTAX_CONTRACT,  # Solidity
+                constants.KEY_LIBRARY_DECLARATION: constants.SYNTAX_LIBRARY,  # Solidity
+                constants.KEY_MODIFIER_DEFINITION: constants.SYNTAX_MODIFIER,  # Solidity
+                constants.KEY_CONSTRUCTOR_DEFINITION: constants.SYNTAX_CONSTRUCTOR,  # Solidity
+                constants.KEY_FALLBACK_RECEIVE_DEFINITION: constants.KEY_FUNCTION,  # Solidity (fallback/receive)
+                constants.KEY_EVENT_DEFINITION: constants.SYNTAX_EVENT,  # Solidity
+                constants.KEY_ERROR_DECLARATION: constants.KEY_ERROR,  # Solidity
             }
 
             chunk_type = chunk_type_map.get(tchunk.node_type, tchunk.node_type)
 
             # Extract parent name and adjust chunk type for methods
-            parent_name = tchunk.metadata.get("parent_name")
+            parent_name = tchunk.metadata.get(constants.KEY_PARENT_NAME)
 
             # If we have a parent_name and it's a function, it's actually a method
-            if parent_name and chunk_type == "function":
-                chunk_type = "method"
+            if parent_name and chunk_type == constants.KEY_FUNCTION:
+                chunk_type = constants.SYNTAX_METHOD
 
             # Build folder structure from file path
             path = Path(file_path)
@@ -207,16 +162,16 @@ class MultiLanguageChunker:
 
             # Extract semantic tags from metadata
             tags = []
-            if tchunk.metadata.get("is_async"):
-                tags.append("async")
-            if tchunk.metadata.get("is_generator"):
-                tags.append("generator")
-            if tchunk.metadata.get("is_export"):
-                tags.append("export")
-            if tchunk.metadata.get("has_generics"):
-                tags.append("generic")
-            if tchunk.metadata.get("is_component"):
-                tags.append("component")
+            if tchunk.metadata.get(constants.KEY_IS_ASYNC):
+                tags.append(constants.SYNTAX_ASYNC)
+            if tchunk.metadata.get(constants.KEY_IS_GENERATOR):
+                tags.append(constants.SYNTAX_GENERATOR)
+            if tchunk.metadata.get(constants.KEY_IS_EXPORT):
+                tags.append(constants.SYNTAX_EXPORT)
+            if tchunk.metadata.get(constants.KEY_HAS_GENERICS):
+                tags.append(constants.SYNTAX_GENERIC)
+            if tchunk.metadata.get(constants.KEY_IS_COMPONENT):
+                tags.append(constants.SYNTAX_COMPONENT)
 
             # Add language tag
             tags.append(tchunk.language)
@@ -277,7 +232,7 @@ class MultiLanguageChunker:
                 if any(part in self.DEFAULT_IGNORED_DIRS for part in file_path.parts):
                     continue
 
-                # Honor project .claude-context-ignore (gitignore syntax)
+                # Honor project .code-search-ignore (gitignore syntax)
                 if self.pathspec is not None and self.root_path:
                     try:
                         rel = file_path.relative_to(self.root_path).as_posix()

@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from code_search_local import constants
 from code_search_local.chunking.tree_sitter import TreeSitterChunker
+from tests import constants as test_constants
 
 
 @pytest.mark.unit
@@ -30,7 +32,7 @@ class TestTreeSitterChunker:
         import code_search_local.chunking.tree_sitter as tsf
 
         # Python should be supported if tree-sitter-python is installed
-        if "python" not in tsf.AVAILABLE_LANGUAGES:
+        if constants.KEY_PYTHON not in tsf.AVAILABLE_LANGUAGES:
             pytest.skip("tree-sitter-python not installed")
 
         assert self.chunker.is_supported("test.py"), "Should support .py files"
@@ -39,10 +41,10 @@ class TestTreeSitterChunker:
         """Test chunking a Python file."""
         import code_search_local.chunking.tree_sitter as tsf
 
-        if "python" not in tsf.AVAILABLE_LANGUAGES:
+        if constants.KEY_PYTHON not in tsf.AVAILABLE_LANGUAGES:
             pytest.skip("tree-sitter-python not installed")
 
-        file_path = Path(self.temp_dir) / "test.py"
+        file_path = Path(self.temp_dir) / test_constants.VALUE_TEST_PY
         code = """
 def test_function():
     return "test"
@@ -55,7 +57,9 @@ class TestClass:
         chunks = self.chunker.chunk_file(str(file_path))
 
         assert len(chunks) >= 2, "Should chunk both function and class"
-        assert all(c.language == "python" for c in chunks), "All chunks should be marked as Python"
+        assert all(c.language == constants.KEY_PYTHON for c in chunks), (
+            "All chunks should be marked as Python"
+        )
 
     def test_unsupported_file(self):
         """Test handling of unsupported file types."""

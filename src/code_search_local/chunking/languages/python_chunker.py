@@ -1,72 +1,74 @@
 """Python-specific tree-sitter based chunker."""
 
 import ast
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
+from code_search_local import constants
 from code_search_local.chunking.base_chunker import LanguageChunker
 
 
 class PythonChunker(LanguageChunker):
     """Python-specific chunker using tree-sitter."""
 
-    def __init__(self):
-        super().__init__("python")
+    LANGUAGE_NAME = constants.KEY_PYTHON
 
-    def _get_splittable_node_types(self) -> Set[str]:
-        """Python-specific splittable node types."""
-        return {
-            "function_definition",
-            "class_definition",
-            "decorated_definition",
+    SPLITTABLE_NODE_TYPES = frozenset(
+        {
+            constants.KEY_FUNCTION_DEFINITION,
+            constants.KEY_CLASS_DEFINITION,
+            constants.SYNTAX_DECORATED_DEFINITION,
         }
+    )
 
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
         """Extract Python-specific metadata."""
-        metadata = {"node_type": node.type}
-
-        # Extract function/class name
-        for child in node.children:
-            if child.type == "identifier":
-                metadata["name"] = self.get_node_text(child, source)
-                break
+        metadata = self.named_metadata(node, source)
 
         # Extract decorators if present
-        if node.type == "decorated_definition":
+        if node.type == constants.SYNTAX_DECORATED_DEFINITION:
             decorators = []
             for child in node.children:
-                if child.type == "decorator":
+                if child.type == constants.SYNTAX_DECORATOR:
                     decorators.append(self.get_node_text(child, source))
-            metadata["decorators"] = decorators
+            metadata[constants.KEY_DECORATORS] = decorators
 
             # Get the actual definition node
             for child in node.children:
-                if child.type in ["function_definition", "class_definition"]:
+                if child.type in [
+                    constants.KEY_FUNCTION_DEFINITION,
+                    constants.KEY_CLASS_DEFINITION,
+                ]:
                     # Get name from the actual definition
                     for subchild in child.children:
-                        if subchild.type == "identifier":
-                            metadata["name"] = self.get_node_text(subchild, source)
+                        if subchild.type == constants.SYNTAX_IDENTIFIER:
+                            metadata[constants.KEY_NAME] = self.get_node_text(subchild, source)
                             break
 
         # Extract docstring for functions and classes
         docstring = self._extract_docstring(node, source)
         if docstring:
-            metadata["docstring"] = docstring
+            metadata[constants.KEY_DOCSTRING] = docstring
 
         # Count parameters for functions
-        if node.type == "function_definition" or (
-            node.type == "decorated_definition"
-            and any(c.type == "function_definition" for c in node.children)
+        if node.type == constants.KEY_FUNCTION_DEFINITION or (
+            node.type == constants.SYNTAX_DECORATED_DEFINITION
+            and any(c.type == constants.KEY_FUNCTION_DEFINITION for c in node.children)
         ):
-            definition = node.child_by_field_name("definition") or node
+            definition = node.child_by_field_name(constants.SYNTAX_DEFINITION) or node
             for child in definition.children:
-                if child.type == "parameters":
+                if child.type == constants.SYNTAX_PARAMETERS:
                     # Count parameter nodes
                     param_count = sum(
                         1
                         for c in child.children
-                        if c.type in ["identifier", "typed_parameter", "default_parameter"]
+                        if c.type
+                        in [
+                            constants.SYNTAX_IDENTIFIER,
+                            constants.SYNTAX_TYPED_PARAMETER,
+                            constants.SYNTAX_DEFAULT_PARAMETER,
+                        ]
                     )
-                    metadata["param_count"] = param_count
+                    metadata[constants.KEY_PARAM_COUNT] = param_count
                     break
 
         return metadata
@@ -76,13 +78,13 @@ class PythonChunker(LanguageChunker):
         # Find the body/block of the function or class
         body_node = None
         for child in node.children:
-            if child.type == "block":
+            if child.type == constants.SYNTAX_BLOCK:
                 body_node = child
                 break
-            elif child.type in ["function_definition", "class_definition"]:
+            elif child.type in [constants.KEY_FUNCTION_DEFINITION, constants.KEY_CLASS_DEFINITION]:
                 # Handle decorated definitions
                 for subchild in child.children:
-                    if subchild.type == "block":
+                    if subchild.type == constants.SYNTAX_BLOCK:
                         body_node = subchild
                         break
 
@@ -91,9 +93,11 @@ class PythonChunker(LanguageChunker):
 
         # New grammars expose a string directly; older versions wrap expressions.
         first = body_node.children[0]
-        candidates = first.children if first.type == "expression_statement" else [first]
+        candidates = (
+            first.children if first.type == constants.SYNTAX_EXPRESSION_STATEMENT else [first]
+        )
         for child in candidates:
-            if child.type == "string":
+            if child.type == constants.SYNTAX_STRING:
                 try:
                     value = ast.literal_eval(self.get_node_text(child, source))
                 except (SyntaxError, ValueError):

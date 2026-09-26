@@ -1,56 +1,52 @@
 """C-specific tree-sitter based chunker."""
 
-from typing import Any, Dict, Set
+from typing import Any, Dict
 
+from code_search_local import constants
 from code_search_local.chunking.base_chunker import LanguageChunker
 
 
 class CChunker(LanguageChunker):
     """C-specific chunker using tree-sitter."""
 
-    def __init__(self):
-        super().__init__("c")
+    LANGUAGE_NAME = constants.LANGUAGE_C
 
-    def _get_splittable_node_types(self) -> Set[str]:
-        """C-specific splittable node types."""
-        return {
-            "function_definition",
-            "struct_specifier",
-            "union_specifier",
-            "enum_specifier",
-            "type_definition",
+    SPLITTABLE_NODE_TYPES = frozenset(
+        {
+            constants.KEY_FUNCTION_DEFINITION,
+            constants.KEY_STRUCT_SPECIFIER,
+            constants.KEY_UNION_SPECIFIER,
+            constants.KEY_ENUM_SPECIFIER,
+            constants.SYNTAX_TYPE_DEFINITION,
         }
+    )
 
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
         """Extract C-specific metadata."""
-        metadata = {"node_type": node.type}
+        metadata = {constants.KEY_NODE_TYPE: node.type}
 
         # Extract function name
-        if node.type == "function_definition":
-            # Look for function_declarator
-            for child in node.children:
-                if child.type == "function_declarator":
-                    for declarator_child in child.children:
-                        if declarator_child.type == "identifier":
-                            metadata["name"] = self.get_node_text(declarator_child, source)
-                            break
-                    break
+        if node.type == constants.KEY_FUNCTION_DEFINITION:
+            metadata = self.declarator_metadata(node, source, (constants.SYNTAX_IDENTIFIER,))
 
         # Extract struct/union/enum name
-        elif node.type in ["struct_specifier", "union_specifier", "enum_specifier"]:
-            for child in node.children:
-                if child.type in ["type_identifier", "identifier"]:
-                    metadata["name"] = self.get_node_text(child, source)
-                    break
+        elif node.type in [
+            constants.KEY_STRUCT_SPECIFIER,
+            constants.KEY_UNION_SPECIFIER,
+            constants.KEY_ENUM_SPECIFIER,
+        ]:
+            metadata = self.named_metadata(
+                node, source, [constants.SYNTAX_TYPE_IDENTIFIER, constants.SYNTAX_IDENTIFIER]
+            )
 
         # Extract typedef name
-        elif node.type == "type_definition":
+        elif node.type == constants.SYNTAX_TYPE_DEFINITION:
             # Look for the last identifier which is the new type name
             identifiers = []
             for child in node.children:
-                if child.type == "identifier":
+                if child.type == constants.SYNTAX_IDENTIFIER:
                     identifiers.append(self.get_node_text(child, source))
             if identifiers:
-                metadata["name"] = identifiers[-1]
+                metadata[constants.KEY_NAME] = identifiers[-1]
 
         return metadata

@@ -6,6 +6,9 @@ import threading
 
 import numpy as np
 
+from code_search_local import constants
+from tests import constants as test_constants
+
 
 class FakeModel:
     instances = []
@@ -15,14 +18,17 @@ class FakeModel:
         self.calls = []
         self.closed = False
         self.info = {
-            "model": settings.model,
-            "revision": "fixture-revision",
-            "encoding": {"normalize": True, "format_version": 1},
-            "dimension": 64,
-            "backend": "cpu",
-            "device": "cpu",
-            "gpu": None,
-            "fallback_reason": None,
+            constants.KEY_MODEL: settings.model,
+            constants.KEY_REVISION: "fixture-revision",
+            constants.KEY_ENCODING: {
+                constants.KEY_NORMALIZE: True,
+                constants.KEY_FORMAT_VERSION: 1,
+            },
+            constants.KEY_DIMENSION: 64,
+            constants.KEY_BACKEND: constants.BACKEND_CPU,
+            constants.KEY_DEVICE: constants.BACKEND_CPU,
+            constants.KEY_GPU: None,
+            constants.KEY_FALLBACK_REASON: None,
         }
         self.instances.append(self)
         report(model_acquisitions=1, model_downloads=1, model_loads=1)
@@ -32,7 +38,7 @@ class FakeModel:
         self.calls.append((texts, purpose))
         result = np.zeros((len(texts), 64), dtype=np.float32)
         for row, text in enumerate(texts):
-            for word in re.findall(r"[a-z]+", text.lower()):
+            for word in re.findall(test_constants.PATTERN_A_Z, text.lower()):
                 result[row, int(hashlib.sha256(word.encode()).hexdigest(), 16) % 64] += 1
             result[row] /= max(np.linalg.norm(result[row]), 1)
         return result

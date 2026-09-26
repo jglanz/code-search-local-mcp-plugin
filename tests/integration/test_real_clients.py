@@ -15,80 +15,89 @@ from pathlib import Path
 
 import pytest
 
+from code_search_local import constants
 from code_search_local.client import Client
 from code_search_local.config import Settings
 from code_search_local.service import token_for
-from tests.helpers import free_port, wait_healthy
+from tests import constants as test_constants
+from tests.helpers import free_port, model_blob_fingerprints, search_project, wait_healthy
 
 pytestmark = [pytest.mark.clients, pytest.mark.real_model]
 AUTH_SOURCE = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
 def test_two_real_claude_instances(tmp_path):
-    if os.environ.get("CODE_SEARCH_REAL_CLIENTS") != "1":
+    if os.environ.get(test_constants.ENV_CODE_SEARCH_REAL_CLIENTS) != constants.ENV_ENABLED:
         pytest.skip(
             "Opt into the authenticated real-client release lane with CODE_SEARCH_REAL_CLIENTS=1"
         )
     auth = subprocess.run(
-        ["claude", "auth", "status"],
+        [constants.HARNESS_CLAUDE, "auth", constants.KEY_STATUS],
         capture_output=True,
         text=True,
         check=True,
-        env={**os.environ, "CLAUDE_CONFIG_DIR": str(AUTH_SOURCE)},
+        env={**os.environ, constants.ENV_CLAUDE_CONFIG_DIR: str(AUTH_SOURCE)},
     )
-    assert json.loads(auth.stdout)["loggedIn"], (
+    assert json.loads(auth.stdout)[test_constants.KEY_LOGGED_IN], (
         "Claude authentication is required for this release lane"
     )
-    backend = os.environ.get("CODE_SEARCH_TEST_BACKEND", "cuda")
-    settings = Settings(storage=str(tmp_path / "cold-state"), port=free_port(), watch=False)
+    backend = os.environ.get(test_constants.ENV_CODE_SEARCH_TEST_BACKEND, constants.BACKEND_CUDA)
+    settings = Settings(
+        storage=str(tmp_path / test_constants.PATH_COLD_STATE), port=free_port(), watch=False
+    )
     client = Client(settings)
     roots = []
     for name in ("quartz", "saffron"):
         root = tmp_path / name
         root.mkdir()
-        (root / "shared.py").write_text('def common_helper():\n    return "shared cache"\n')
+        (root / test_constants.PATH_SHARED_PY).write_text(
+            'def common_helper():\n    return "shared cache"\n'
+        )
         (root / f"{name}.py").write_text(
             f'def {name}_only():\n    """Unique {name} fixture."""\n    return "{name}"\n'
         )
         roots.append(root)
     command = [
         sys.executable,
-        "-m",
+        constants.SHORT_OPTION_M,
         "tests.daemon",
-        "--storage",
+        constants.OPTION_STORAGE,
         settings.storage,
-        "--port",
+        constants.OPTION_PORT,
         str(settings.port),
-        "--backend",
+        constants.OPTION_BACKEND,
         backend,
-        "--gate",
+        test_constants.OPTION_GATE,
         "2",
     ]
-    auth_dir = tmp_path / "claude-auth"
+    auth_dir = tmp_path / test_constants.PATH_CLAUDE_AUTH
     auth_dir.mkdir(mode=0o700)
-    original_auth = AUTH_SOURCE / ".credentials.json"
+    original_auth = AUTH_SOURCE / test_constants.PATH_CREDENTIALS_JSON
     if original_auth.exists():
-        shutil.copy2(original_auth, auth_dir / ".credentials.json")
-        (auth_dir / ".credentials.json").chmod(0o600)
+        shutil.copy2(original_auth, auth_dir / test_constants.PATH_CREDENTIALS_JSON)
+        (auth_dir / test_constants.PATH_CREDENTIALS_JSON).chmod(0o600)
     env = {
         **os.environ,
-        "HF_HUB_DISABLE_XET": "1",
-        "CLAUDE_CONFIG_DIR": str(auth_dir),
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        test_constants.ENV_HF_HUB_DISABLE_XET: constants.ENV_ENABLED,
+        constants.ENV_CLAUDE_CONFIG_DIR: str(auth_dir),
+        test_constants.ENV_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: constants.ENV_ENABLED,
     }
-    log = (tmp_path / "daemon.log").open("w+")
+    log = (tmp_path / test_constants.PATH_DAEMON_LOG).open(test_constants.FILE_MODE_W)
     process = subprocess.Popen(command, stdout=log, stderr=log, env=env)
     try:
         wait_healthy(process, client, log)
-        mcp_path = tmp_path / "mcp.json"
+        mcp_path = tmp_path / test_constants.PATH_MCP_JSON
         mcp_path.write_text(
             json.dumps(
                 {
-                    "mcpServers": {
-                        "code-search-local": {
-                            "type": "http",
-                            "url": settings.url + "/mcp",
-                            "headers": {"Authorization": "Bearer " + token_for(settings.root)},
+                    constants.KEY_MCP_SERVERS: {
+                        constants.APPLICATION_NAME: {
+                            constants.KEY_TYPE: constants.TRANSPORT_HTTP,
+                            constants.KEY_URL: settings.url + constants.MCP_ENDPOINT,
+                            constants.KEY_HEADERS: {
+                                constants.KEY_AUTHORIZATION: constants.HTTP_BEARER
+                                + token_for(settings.root)
+                            },
                         }
                     }
                 }
@@ -104,28 +113,33 @@ def test_two_real_claude_instances(tmp_path):
                 "Briefly report whether indexing succeeded and search found the fixture."
             )
             args = [
-                "claude",
-                "--setting-sources",
+                constants.HARNESS_CLAUDE,
+                test_constants.OPTION_SETTING_SOURCES,
                 "",
-                "--settings",
+                test_constants.OPTION_SETTINGS,
                 '{"disableAllHooks":true}',
-                "-p",
+                test_constants.SHORT_OPTION_P,
                 prompt,
-                "--strict-mcp-config",
-                "--mcp-config",
+                test_constants.OPTION_STRICT_MCP_CONFIG,
+                test_constants.OPTION_MCP_CONFIG,
                 str(mcp_path),
-                "--no-session-persistence",
-                "--output-format",
+                test_constants.OPTION_NO_SESSION_PERSISTENCE,
+                test_constants.OPTION_OUTPUT_FORMAT,
                 "stream-json",
-                "--verbose",
-                "--tools",
+                test_constants.OPTION_VERBOSE,
+                test_constants.OPTION_TOOLS,
                 "",
-                "--allowedTools",
+                test_constants.OPTION_ALLOWED_TOOLS,
                 "mcp__code-search-local__index_directory",
                 "mcp__code-search-local__search_code",
             ]
             result = subprocess.run(
-                args, cwd=root, capture_output=True, text=True, timeout=300, env=env
+                args,
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=test_constants.REAL_CLIENT_TIMEOUT_SECONDS,
+                env=env,
             )
             (tmp_path / f"{root.name}-claude.jsonl").write_text(result.stdout)
             assert result.returncode == 0, result.stderr + result.stdout[-3000:]
@@ -135,78 +149,83 @@ def test_two_real_claude_instances(tmp_path):
             calls = [
                 block
                 for event in events
-                if event.get("type") == "assistant"
-                for block in event.get("message", {}).get("content", [])
-                if block.get("type") == "tool_use"
+                if event.get(constants.KEY_TYPE) == test_constants.VALUE_ASSISTANT
+                for block in event.get(test_constants.KEY_MESSAGE, {}).get(
+                    constants.KEY_CONTENT, []
+                )
+                if block.get(constants.KEY_TYPE) == test_constants.VALUE_TOOL_USE
             ]
-            assert any(c["name"].endswith("index_directory") for c in calls), result.stdout
-            assert any(c["name"].endswith("search_code") for c in calls), result.stdout
+            assert any(c[constants.KEY_NAME].endswith("index_directory") for c in calls), (
+                result.stdout
+            )
+            assert any(c[constants.KEY_NAME].endswith("search_code") for c in calls), result.stdout
             return events
 
         with ThreadPoolExecutor(2) as pool:
             list(pool.map(run_claude, roots))
         stats = asyncio.run(client.stats())
-        (tmp_path / "stats-first.json").write_text(json.dumps(stats, indent=2))
-        assert len(stats["projects"]) == 2
-        jobs = list(stats["jobs"].values())
-        assert len(jobs) == 2 and all(job["status"] == "succeeded" for job in jobs)
-        assert max(job["started_at"] for job in jobs) < min(job["finished_at"] for job in jobs)
-        assert stats["shared"]["model_acquisitions"] == 1
-        assert stats["shared"]["model_downloads"] == 1
-        assert stats["shared"]["model_loads"] == 1
-        assert stats["shared"]["max_concurrent_inference"] == 1
-        assert stats["shared"]["model"]["backend"] == backend
-        assert stats["shared"]["model"]["fallback_reason"] is None
-        assert sum(p["cache_hits"] for p in stats["projects"].values()) >= 1
-        audit = settings.root / "download-transfers.jsonl"
+        (tmp_path / test_constants.PATH_STATS_FIRST_JSON).write_text(json.dumps(stats, indent=2))
+        assert len(stats[constants.KEY_PROJECTS]) == 2
+        jobs = list(stats[constants.KEY_JOBS].values())
+        assert len(jobs) == 2 and all(
+            job[constants.KEY_STATUS] == constants.STATUS_SUCCEEDED for job in jobs
+        )
+        assert max(job[test_constants.KEY_STARTED_AT] for job in jobs) < min(
+            job[test_constants.KEY_FINISHED_AT] for job in jobs
+        )
+        assert stats[constants.KEY_SHARED][test_constants.KEY_MODEL_ACQUISITIONS] == 1
+        assert stats[constants.KEY_SHARED][test_constants.KEY_MODEL_DOWNLOADS] == 1
+        assert stats[constants.KEY_SHARED][test_constants.KEY_MODEL_LOADS] == 1
+        assert stats[constants.KEY_SHARED][constants.KEY_MAX_CONCURRENT_INFERENCE] == 1
+        assert stats[constants.KEY_SHARED][constants.KEY_MODEL][constants.KEY_BACKEND] == backend
+        assert (
+            stats[constants.KEY_SHARED][constants.KEY_MODEL][constants.KEY_FALLBACK_REASON] is None
+        )
+        assert sum(p[constants.KEY_CACHE_HITS] for p in stats[constants.KEY_PROJECTS].values()) >= 1
+        audit = settings.root / test_constants.PATH_DOWNLOAD_TRANSFERS_JSONL
         transfers = [json.loads(line) for line in audit.read_text().splitlines()]
-        assert transfers and all(event["bytes"] > 0 for event in transfers)
-        names = [event["blob"] for event in transfers]
+        assert transfers and all(event[test_constants.KEY_BYTES] > 0 for event in transfers)
+        names = [event[test_constants.KEY_BLOB] for event in transfers]
         assert len(names) == len(set(names)), "An artifact was transferred more than once"
-        blobs = {
-            str(p): (p.stat().st_ino, p.stat().st_size, p.stat().st_mtime_ns)
-            for p in (settings.root / "models").glob("models--*/blobs/*")
-            if p.is_file()
-        }
-        assert len(blobs) == stats["shared"]["downloaded_files"]
+        blobs = model_blob_fingerprints(settings.root)
+        assert len(blobs) == stats[constants.KEY_SHARED][test_constants.KEY_DOWNLOADED_FILES]
         for root in roots:
-            result = asyncio.run(
-                client.request(
-                    "POST", "/api/v1/search", data={"project_path": str(root), "query": root.name}
-                )
+            result = search_project(client, str(root), root.name)
+            assert all(
+                Path(hit[test_constants.KEY_FILE_PATH]).is_relative_to(root)
+                for hit in result[constants.KEY_RESULTS]
             )
-            assert all(Path(hit["file_path"]).is_relative_to(root) for hit in result["results"])
-            assert any(root.name in hit["name"] for hit in result["results"])
+            assert any(
+                root.name in hit[constants.KEY_NAME] for hit in result[constants.KEY_RESULTS]
+            )
         process.terminate()
-        process.wait(30)
-        process = subprocess.Popen([*command[:-2], "--offline"], stdout=log, stderr=log, env=env)
+        process.wait(test_constants.SLOW_PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
+        process = subprocess.Popen(
+            [*command[:-2], test_constants.OPTION_OFFLINE], stdout=log, stderr=log, env=env
+        )
         wait_healthy(process, client, log)
         for root in roots:
-            result = asyncio.run(
-                client.request(
-                    "POST", "/api/v1/search", data={"project_path": str(root), "query": root.name}
-                )
-            )
-            assert result["results"]
+            result = search_project(client, str(root), root.name)
+            assert result[constants.KEY_RESULTS]
         after = asyncio.run(client.stats())
-        assert after["shared"]["model_downloads"] == 1
+        assert after[constants.KEY_SHARED][test_constants.KEY_MODEL_DOWNLOADS] == 1
         assert audit.read_text().splitlines() == [
             json.dumps(event, sort_keys=True) for event in transfers
         ]
-        assert blobs == {
-            str(p): (p.stat().st_ino, p.stat().st_size, p.stat().st_mtime_ns)
-            for p in (settings.root / "models").glob("models--*/blobs/*")
-            if p.is_file()
-        }
+        assert blobs == model_blob_fingerprints(settings.root)
         for root in roots:
             (root / f"{root.name}.py").unlink()
-            (root / "updated.py").write_text(f'def {root.name}_updated(): return "changed"\n')
+            (root / test_constants.PATH_UPDATED_PY).write_text(
+                f'def {root.name}_updated(): return "changed"\n'
+            )
 
         async def update():
             return await asyncio.gather(
                 *(
                     client.request(
-                        "POST", "/api/v1/index", data={"directory_path": str(root), "wait": True}
+                        constants.HTTP_POST,
+                        constants.INDEX_ENDPOINT,
+                        data={constants.KEY_DIRECTORY_PATH: str(root), constants.KEY_WAIT: True},
                     )
                     for root in roots
                 )
@@ -214,10 +233,12 @@ def test_two_real_claude_instances(tmp_path):
 
         updated = asyncio.run(update())
         assert all(
-            job["result"]["changes"] == {"added": 1, "deleted": 1, "modified": 0} for job in updated
+            job[test_constants.KEY_RESULT][constants.KEY_CHANGES]
+            == {constants.KEY_ADDED: 1, constants.KEY_DELETED: 1, constants.KEY_MODIFIED: 0}
+            for job in updated
         )
     finally:
         process.terminate()
-        process.wait(30)
+        process.wait(test_constants.SLOW_PROCESS_SHUTDOWN_TIMEOUT_SECONDS)
         log.close()
         shutil.rmtree(auth_dir)

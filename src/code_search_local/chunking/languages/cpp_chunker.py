@@ -1,59 +1,63 @@
 """C++-specific tree-sitter based chunker."""
 
-from typing import Any, Dict, Set
+from typing import Any, Dict
 
+from code_search_local import constants
 from code_search_local.chunking.base_chunker import LanguageChunker
 
 
 class CppChunker(LanguageChunker):
     """C++-specific chunker using tree-sitter."""
 
-    def __init__(self):
-        super().__init__("cpp")
+    LANGUAGE_NAME = constants.LANGUAGE_CPP
 
-    def _get_splittable_node_types(self) -> Set[str]:
-        """C++-specific splittable node types."""
-        return {
-            "function_definition",
-            "class_specifier",
-            "struct_specifier",
-            "union_specifier",
-            "enum_specifier",
-            "namespace_definition",
-            "template_declaration",
-            "concept_definition",
+    SPLITTABLE_NODE_TYPES = frozenset(
+        {
+            constants.KEY_FUNCTION_DEFINITION,
+            constants.KEY_CLASS_SPECIFIER,
+            constants.KEY_STRUCT_SPECIFIER,
+            constants.KEY_UNION_SPECIFIER,
+            constants.KEY_ENUM_SPECIFIER,
+            constants.KEY_NAMESPACE_DEFINITION,
+            constants.KEY_TEMPLATE_DECLARATION,
+            constants.KEY_CONCEPT_DEFINITION,
         }
+    )
 
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
         """Extract C++-specific metadata."""
-        metadata = {"node_type": node.type}
+        metadata = {constants.KEY_NODE_TYPE: node.type}
 
         # Extract name
-        if node.type == "function_definition":
-            # Look for function_declarator
-            for child in node.children:
-                if child.type == "function_declarator":
-                    for declarator_child in child.children:
-                        if declarator_child.type in ["identifier", "qualified_identifier"]:
-                            metadata["name"] = self.get_node_text(declarator_child, source)
-                            break
-                    break
+        if node.type == constants.KEY_FUNCTION_DEFINITION:
+            metadata = self.declarator_metadata(
+                node, source, (constants.SYNTAX_IDENTIFIER, constants.SYNTAX_QUALIFIED_IDENTIFIER)
+            )
 
-        elif node.type in ["class_specifier", "struct_specifier", "namespace_definition"]:
-            for child in node.children:
-                if child.type in ["type_identifier", "identifier", "namespace_identifier"]:
-                    metadata["name"] = self.get_node_text(child, source)
-                    break
+        elif node.type in [
+            constants.KEY_CLASS_SPECIFIER,
+            constants.KEY_STRUCT_SPECIFIER,
+            constants.KEY_NAMESPACE_DEFINITION,
+        ]:
+            metadata = self.named_metadata(
+                node,
+                source,
+                [
+                    constants.SYNTAX_TYPE_IDENTIFIER,
+                    constants.SYNTAX_IDENTIFIER,
+                    constants.SYNTAX_NAMESPACE_IDENTIFIER,
+                ],
+            )
 
         # Check for template parameters
-        if node.type == "template_declaration":
-            metadata["is_template"] = True
+        if node.type == constants.KEY_TEMPLATE_DECLARATION:
+            metadata[constants.KEY_IS_TEMPLATE] = True
             # Get the templated entity name
             for child in node.children:
-                if child.type in ["function_definition", "class_specifier"]:
+                if child.type in [constants.KEY_FUNCTION_DEFINITION, constants.KEY_CLASS_SPECIFIER]:
                     child_metadata = self.extract_metadata(child, source)
-                    if "name" in child_metadata:
-                        metadata["name"] = child_metadata["name"]
+                    if constants.KEY_NAME in child_metadata:
+                        metadata[constants.KEY_NAME] = child_metadata[constants.KEY_NAME]
                     break
 
         return metadata

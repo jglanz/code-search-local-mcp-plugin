@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from code_search_local import constants
 from code_search_local.merkle.merkle_dag import MerkleDAG
 from code_search_local.merkle.snapshot_manager import SnapshotManager
 
@@ -28,16 +29,16 @@ class FileChanges:
     def to_dict(self) -> Dict:
         """Convert to dictionary."""
         return {
-            "added": self.added,
-            "removed": self.removed,
-            "modified": self.modified,
-            "unchanged": self.unchanged,
-            "summary": {
-                "added_count": len(self.added),
-                "removed_count": len(self.removed),
-                "modified_count": len(self.modified),
-                "unchanged_count": len(self.unchanged),
-                "total_changed": self.total_changed(),
+            constants.KEY_ADDED: self.added,
+            constants.KEY_REMOVED: self.removed,
+            constants.KEY_MODIFIED: self.modified,
+            constants.KEY_UNCHANGED: self.unchanged,
+            constants.KEY_SUMMARY: {
+                constants.KEY_ADDED_COUNT: len(self.added),
+                constants.KEY_REMOVED_COUNT: len(self.removed),
+                constants.KEY_MODIFIED_COUNT: len(self.modified),
+                constants.KEY_UNCHANGED_COUNT: len(self.unchanged),
+                constants.KEY_TOTAL_CHANGED: self.total_changed(),
             },
         }
 
@@ -86,15 +87,8 @@ class ChangeDetector:
 
         return FileChanges(added=added, removed=removed, modified=modified, unchanged=unchanged)
 
-    def detect_changes_from_snapshot(self, project_path: str) -> Tuple[FileChanges, MerkleDAG]:
-        """Detect changes between saved snapshot and current state.
-
-        Args:
-            project_path: Path to project
-
-        Returns:
-            Tuple of (FileChanges, current MerkleDAG)
-        """
+    def _build_current_dag(self, project_path):
+        """Build a snapshot while excluding the snapshot store when it is inside the root."""
         # Build current DAG
         current_dag = MerkleDAG(project_path)
 
@@ -108,6 +102,18 @@ class ChangeDetector:
             pass
 
         current_dag.build()
+        return current_dag
+
+    def detect_changes_from_snapshot(self, project_path: str) -> Tuple[FileChanges, MerkleDAG]:
+        """Detect changes between saved snapshot and current state.
+
+        Args:
+            project_path: Path to project
+
+        Returns:
+            Tuple of (FileChanges, current MerkleDAG)
+        """
+        current_dag = self._build_current_dag(project_path)
 
         # Load previous snapshot
         old_dag = self.snapshot_manager.load_snapshot(project_path)
@@ -136,19 +142,7 @@ class ChangeDetector:
         if old_dag is None:
             return True
 
-        # Build current DAG
-        current_dag = MerkleDAG(project_path)
-
-        # Add snapshot directory to ignore patterns if it's inside the project
-        snapshot_dir = self.snapshot_manager.storage_dir
-        try:
-            relative_snapshot = snapshot_dir.relative_to(Path(project_path))
-            current_dag.ignore_patterns.add(str(relative_snapshot))
-        except ValueError:
-            # Snapshot dir is not inside the project, no need to ignore
-            pass
-
-        current_dag.build()
+        current_dag = self._build_current_dag(project_path)
 
         # Compare root hashes
         return old_dag.get_root_hash() != current_dag.get_root_hash()
@@ -183,12 +177,12 @@ class ChangeDetector:
             Dictionary with change analysis
         """
         analysis = {
-            "file_extensions": {},
-            "directories": {},
-            "change_types": {
-                "added": len(changes.added),
-                "removed": len(changes.removed),
-                "modified": len(changes.modified),
+            constants.KEY_FILE_EXTENSIONS: {},
+            constants.KEY_DIRECTORIES: {},
+            constants.KEY_CHANGE_TYPES: {
+                constants.KEY_ADDED: len(changes.added),
+                constants.KEY_REMOVED: len(changes.removed),
+                constants.KEY_MODIFIED: len(changes.modified),
             },
         }
 
@@ -198,19 +192,29 @@ class ChangeDetector:
             path = Path(file_path)
 
             # Count by extension
-            ext = path.suffix or "no_extension"
-            analysis["file_extensions"][ext] = analysis["file_extensions"].get(ext, 0) + 1
+            ext = path.suffix or constants.KEY_NO_EXTENSION
+            analysis[constants.KEY_FILE_EXTENSIONS][ext] = (
+                analysis[constants.KEY_FILE_EXTENSIONS].get(ext, 0) + 1
+            )
 
             # Count by directory
-            dir_path = str(path.parent) if path.parent != Path(".") else "root"
-            analysis["directories"][dir_path] = analysis["directories"].get(dir_path, 0) + 1
+            dir_path = (
+                str(path.parent)
+                if path.parent != Path(constants.KEY_PROJECT_ROOT)
+                else constants.KEY_ROOT
+            )
+            analysis[constants.KEY_DIRECTORIES][dir_path] = (
+                analysis[constants.KEY_DIRECTORIES].get(dir_path, 0) + 1
+            )
 
         # Sort by frequency
-        analysis["file_extensions"] = dict(
-            sorted(analysis["file_extensions"].items(), key=lambda x: x[1], reverse=True)
+        analysis[constants.KEY_FILE_EXTENSIONS] = dict(
+            sorted(
+                analysis[constants.KEY_FILE_EXTENSIONS].items(), key=lambda x: x[1], reverse=True
+            )
         )
-        analysis["directories"] = dict(
-            sorted(analysis["directories"].items(), key=lambda x: x[1], reverse=True)
+        analysis[constants.KEY_DIRECTORIES] = dict(
+            sorted(analysis[constants.KEY_DIRECTORIES].items(), key=lambda x: x[1], reverse=True)
         )
 
         return analysis

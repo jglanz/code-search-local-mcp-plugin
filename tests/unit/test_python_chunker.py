@@ -2,7 +2,9 @@
 
 import pytest
 
+from code_search_local import constants
 from code_search_local.chunking.languages import PythonChunker
+from tests import constants as test_constants
 
 
 @pytest.mark.unit
@@ -40,17 +42,19 @@ class MyClass:
         assert isinstance(chunks, list), "chunk_code should return a list"
 
         # Check function names in metadata
-        func_names = [c.metadata.get("name") for c in chunks if "name" in c.metadata]
-        has_function = "simple_function" in func_names or any(
-            "simple_function" in c.content for c in chunks
+        func_names = [
+            c.metadata.get(constants.KEY_NAME) for c in chunks if constants.KEY_NAME in c.metadata
+        ]
+        has_function = test_constants.VALUE_SIMPLE_FUNCTION in func_names or any(
+            test_constants.VALUE_SIMPLE_FUNCTION in c.content for c in chunks
         )
         assert has_function, "Should find simple_function in chunks"
 
         # Check chunk structure
         for chunk in chunks:
-            assert hasattr(chunk, "content"), "Each chunk should have content"
-            assert hasattr(chunk, "metadata"), "Each chunk should have metadata"
-            assert hasattr(chunk, "node_type"), "Each chunk should have node_type"
+            assert hasattr(chunk, constants.KEY_CONTENT), "Each chunk should have content"
+            assert hasattr(chunk, constants.KEY_METADATA), "Each chunk should have metadata"
+            assert hasattr(chunk, constants.KEY_NODE_TYPE), "Each chunk should have node_type"
             assert isinstance(chunk.content, str), "Chunk content should be a string"
 
     def test_class_chunking(self):
@@ -77,7 +81,10 @@ class DataClass:
 
         # Check for class in node types
         class_chunks = [
-            c for c in chunks if "class" in c.node_type or c.node_type == "decorated_definition"
+            c
+            for c in chunks
+            if constants.SYNTAX_CLASS in c.node_type
+            or c.node_type == constants.SYNTAX_DECORATED_DEFINITION
         ]
         assert len(class_chunks) > 0, "Should find class chunks"
 
@@ -99,7 +106,9 @@ def my_property(self):
         assert len(chunks) >= 1, "Should find at least one chunk"
 
         # Check for decorators in metadata or content
-        has_decorator = any("decorator" in str(c.metadata) or "@" in c.content for c in chunks)
+        has_decorator = any(
+            constants.SYNTAX_DECORATOR in str(c.metadata) or "@" in c.content for c in chunks
+        )
         assert has_decorator, "Should find decorators in chunks"
 
     def test_empty_file(self):
@@ -123,4 +132,4 @@ print("Module level code")
 
         # Should create a module chunk since no functions/classes
         assert len(chunks) == 1, "Module-only file should produce one chunk"
-        assert chunks[0].node_type == "module", "Chunk should be of type module"
+        assert chunks[0].node_type == constants.SYNTAX_MODULE, "Chunk should be of type module"

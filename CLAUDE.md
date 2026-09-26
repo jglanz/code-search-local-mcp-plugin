@@ -1,5 +1,10 @@
 # Repository guidance
 
+Read and follow [the constants and duplication rule](.agents/rules/constants-and-duplication.md):
+operational literals must be defined as named constants (docstrings and prose may remain inline); extract blocks of 5+ code lines
+at 3+ total occurrences, or 8+ code lines at 2+ total occurrences, into a shared
+method or function.
+
 Code Search Local is a shared local MCP indexing service. Application source is in `src/code_search_local`; dependencies, console entry points and test settings live in `pyproject.toml`.
 
 Hatch defines backend environments in `.venvs/cpu`, `.venvs/cuda` and `.venvs/rocm`. Use `hatch run cpu:sync`, `cuda:sync` or `rocm:sync`; they coexist without changing one another. Default test/lint/build commands use CPU. Install a live source user service with `hatch run rocm:setup --agent-harness all` (or `cuda:setup` / `cpu:setup`): it passes `--source <checkout>`, sets the unit working directory to the checkout, and uses its backend venv Python with an editable installation. No wheel/tarball/build is needed. After Python edits use `hatch run rocm:cli service restart`; dependency edits require updating `uv.lock` and rerunning source setup. Direct execution uses `.venvs/rocm/bin/python -m code_search_local`. Run `hatch run coverage` and `hatch run lint`; line and branch coverage each require 90%. `hatch build` creates release artifacts only. Additional acceptance commands are in `tests/README.md`.

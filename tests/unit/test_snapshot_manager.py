@@ -5,8 +5,10 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
+from code_search_local import constants
 from code_search_local.merkle.merkle_dag import MerkleDAG
 from code_search_local.merkle.snapshot_manager import SnapshotManager
+from tests import constants as test_constants
 
 
 class TestSnapshotManager(TestCase):
@@ -15,14 +17,14 @@ class TestSnapshotManager(TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
-        self.test_path = Path(self.temp_dir) / "project"
+        self.test_path = Path(self.temp_dir) / constants.KEY_PROJECT
         self.test_path.mkdir()
 
-        self.storage_dir = Path(self.temp_dir) / "snapshots"
+        self.storage_dir = Path(self.temp_dir) / test_constants.PATH_SNAPSHOTS
         self.manager = SnapshotManager(self.storage_dir)
 
         # Create test files
-        (self.test_path / "test.py").write_text('print("test")')
+        (self.test_path / test_constants.VALUE_TEST_PY).write_text('print("test")')
 
     def tearDown(self):
         """Clean up test fixtures."""
@@ -47,7 +49,7 @@ class TestSnapshotManager(TestCase):
         dag.build()
 
         # Save snapshot
-        self.manager.save_snapshot(dag, {"test": "metadata"})
+        self.manager.save_snapshot(dag, {test_constants.KEY_TEST: constants.KEY_METADATA})
 
         # Load snapshot
         loaded_dag = self.manager.load_snapshot(str(self.test_path))
@@ -62,17 +64,20 @@ class TestSnapshotManager(TestCase):
         dag.build()
 
         # Save with metadata
-        custom_metadata = {"version": "1.0", "author": "test"}
+        custom_metadata = {
+            constants.KEY_VERSION: constants.SNAPSHOT_FORMAT_VERSION,
+            test_constants.KEY_AUTHOR: "test",
+        }
         self.manager.save_snapshot(dag, custom_metadata)
 
         # Load metadata
         metadata = self.manager.load_metadata(str(self.test_path))
 
         assert metadata is not None
-        assert metadata["version"] == "1.0"
-        assert metadata["author"] == "test"
-        assert metadata["project_path"] == str(self.test_path)
-        assert metadata["file_count"] == 1
+        assert metadata[constants.KEY_VERSION] == constants.SNAPSHOT_FORMAT_VERSION
+        assert metadata[test_constants.KEY_AUTHOR] == test_constants.KEY_TEST
+        assert metadata[constants.KEY_PROJECT_PATH] == str(self.test_path)
+        assert metadata[constants.KEY_FILE_COUNT] == 1
 
     def test_snapshot_existence_check(self):
         """Test checking if snapshot exists."""
@@ -92,16 +97,18 @@ class TestSnapshotManager(TestCase):
         for i in range(3):
             project_path = self.test_path.parent / f"project{i}"
             project_path.mkdir()
-            (project_path / "file.txt").write_text(f"content{i}")
+            (project_path / test_constants.PATH_FILE_TXT).write_text(f"content{i}")
 
             dag = MerkleDAG(str(project_path))
             dag.build()
             self.manager.save_snapshot(dag)
 
-            time.sleep(0.1)  # Ensure different timestamps
+            time.sleep(
+                test_constants.SNAPSHOT_TIMESTAMP_DELAY_SECONDS
+            )  # Ensure different timestamps
 
         snapshots = self.manager.list_snapshots()
 
         assert len(snapshots) == 3
         # Should be sorted by timestamp (most recent first)
-        assert "project2" in snapshots[0]["project_path"]
+        assert test_constants.VALUE_PROJECT2 in snapshots[0][constants.KEY_PROJECT_PATH]

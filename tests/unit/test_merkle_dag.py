@@ -5,7 +5,9 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
+from code_search_local import constants
 from code_search_local.merkle.merkle_dag import MerkleDAG
+from tests import constants as test_constants
 
 
 class TestMerkleDAG(TestCase):
@@ -23,14 +25,20 @@ class TestMerkleDAG(TestCase):
     def create_test_files(self):
         """Create test file structure."""
         # Create directories
-        (self.test_path / "src").mkdir()
-        (self.test_path / "tests").mkdir()
+        (self.test_path / test_constants.PATH_SRC).mkdir()
+        (self.test_path / test_constants.PATH_TESTS).mkdir()
 
         # Create files
-        (self.test_path / "README.md").write_text("# Test Project")
-        (self.test_path / "src" / "main.py").write_text("def main(): pass")
-        (self.test_path / "src" / "utils.py").write_text("def helper(): pass")
-        (self.test_path / "tests" / "test_main.py").write_text("def test_main(): pass")
+        (self.test_path / constants.PATH_README_MD).write_text("# Test Project")
+        (self.test_path / test_constants.PATH_SRC / test_constants.PATH_MAIN_PY).write_text(
+            "def main(): pass"
+        )
+        (self.test_path / test_constants.PATH_SRC / test_constants.PATH_UTILS_PY).write_text(
+            "def helper(): pass"
+        )
+        (self.test_path / test_constants.PATH_TESTS / test_constants.PATH_TEST_MAIN_PY).write_text(
+            "def test_main(): pass"
+        )
 
     def test_dag_building(self):
         """Test building a Merkle DAG from directory."""
@@ -48,7 +56,7 @@ class TestMerkleDAG(TestCase):
         assert len(all_files) == 4
 
         # Check specific files
-        assert "README.md" in all_files
+        assert constants.PATH_README_MD in all_files
         assert "src/main.py" in all_files
         assert "src/utils.py" in all_files
         assert "tests/test_main.py" in all_files
@@ -81,7 +89,9 @@ class TestMerkleDAG(TestCase):
         root_hash1 = dag1.get_root_hash()
 
         # Modify a file
-        (self.test_path / "src" / "main.py").write_text("def main(): return 1")
+        (self.test_path / test_constants.PATH_SRC / test_constants.PATH_MAIN_PY).write_text(
+            "def main(): return 1"
+        )
 
         dag2 = MerkleDAG(self.temp_dir)
         dag2.build()
@@ -105,14 +115,21 @@ class TestMerkleDAG(TestCase):
         self.create_test_files()
 
         # Create files that should be ignored
-        (self.test_path / ".git").mkdir()
-        (self.test_path / ".git" / "config").write_text("config")
-        (self.test_path / "__pycache__").mkdir()
-        (self.test_path / "__pycache__" / "cache.pyc").write_text("cache")
-        (self.test_path / "test.pyc").write_text("pyc")
-        backend_env = self.test_path / ".venvs" / "rocm" / "site-packages"
+        (self.test_path / test_constants.PATH_GIT).mkdir()
+        (self.test_path / test_constants.PATH_GIT / test_constants.PATH_CONFIG).write_text("config")
+        (self.test_path / test_constants.PATH_PYCACHE).mkdir()
+        (self.test_path / test_constants.PATH_PYCACHE / test_constants.PATH_CACHE_PYC).write_text(
+            "cache"
+        )
+        (self.test_path / test_constants.VALUE_TEST_PYC).write_text("pyc")
+        backend_env = (
+            self.test_path
+            / test_constants.PATH_VENVS_LOWERCASE
+            / constants.BACKEND_ROCM
+            / test_constants.PATH_SITE_PACKAGES
+        )
         backend_env.mkdir(parents=True)
-        (backend_env / "library.py").write_text("def dependency(): pass\n")
+        (backend_env / test_constants.PATH_LIBRARY_PY).write_text("def dependency(): pass\n")
 
         dag = MerkleDAG(self.temp_dir)
         dag.build()
@@ -122,11 +139,11 @@ class TestMerkleDAG(TestCase):
         # Ignored files should not be in DAG
         assert ".git/config" not in all_files
         assert "__pycache__/cache.pyc" not in all_files
-        assert "test.pyc" not in all_files
+        assert test_constants.VALUE_TEST_PYC not in all_files
         assert not any(path.startswith(".venvs/") for path in all_files)
 
         # Regular files should be present
-        assert "README.md" in all_files
+        assert constants.PATH_README_MD in all_files
 
     def test_dag_serialization(self):
         """Test DAG to/from dict conversion."""
@@ -139,10 +156,10 @@ class TestMerkleDAG(TestCase):
         data = dag1.to_dict()
 
         # Verify structure
-        assert data["root_path"] == str(self.test_path)
-        assert data["root_node"] is not None
-        assert data["file_count"] == 4
-        assert data["total_size"] > 0
+        assert data[constants.KEY_ROOT_PATH] == str(self.test_path)
+        assert data[constants.KEY_ROOT_NODE] is not None
+        assert data[constants.KEY_FILE_COUNT] == 4
+        assert data[constants.KEY_TOTAL_SIZE] > 0
 
         # Deserialize
         dag2 = MerkleDAG.from_dict(data)

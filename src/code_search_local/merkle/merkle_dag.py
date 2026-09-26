@@ -10,20 +10,28 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import pathspec
 
+from code_search_local import constants
+from code_search_local.filesystem import default_ignore_patterns
+
 logger = logging.getLogger(__name__)
 
 IGNORE_FILE_NAME = ".claude-context-ignore"
-DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB; override via CODE_SEARCH_MAX_FILE_BYTES
+DEFAULT_MAX_FILE_BYTES = (
+    constants.DEFAULT_MAX_FILE_BYTES
+)  # 2 MB; override via CODE_SEARCH_MAX_FILE_BYTES
 
 
 def load_pathspec(root: Path) -> Optional[pathspec.PathSpec]:
-    """Load a gitignore-syntax PathSpec from `<root>/.claude-context-ignore` if present."""
-    paths = [root / name for name in (".gitignore", IGNORE_FILE_NAME, ".code-search-ignore")]
+    """Load a gitignore-syntax PathSpec from `<root>/.code-search-ignore` if present."""
+    paths = [
+        root / name
+        for name in (constants.PATH_GITIGNORE, IGNORE_FILE_NAME, constants.PATH_CODE_SEARCH_IGNORE)
+    ]
     try:
         lines = [line for path in paths if path.is_file() for line in path.read_text().splitlines()]
         if not lines:
             return None
-        return pathspec.PathSpec.from_lines("gitignore", lines)
+        return pathspec.PathSpec.from_lines(constants.PATHSPEC_SYNTAX, lines)
     except OSError as e:
         logger.warning(f"Failed to read ignore files in {root}: {e}")
         return None
@@ -37,25 +45,28 @@ class MerkleNode:
     hash: str
     is_file: bool
     size: int = 0
-    children: List["MerkleNode"] = field(default_factory=list)
+    children: List[constants.KEY_MERKLE_NODE] = field(default_factory=list)
 
     def to_dict(self) -> Dict:
         """Convert node to dictionary for serialization."""
         return {
-            "path": self.path,
-            "hash": self.hash,
-            "is_file": self.is_file,
-            "size": self.size,
-            "children": [child.to_dict() for child in self.children],
+            constants.KEY_PATH: self.path,
+            constants.KEY_HASH: self.hash,
+            constants.KEY_IS_FILE: self.is_file,
+            constants.KEY_SIZE: self.size,
+            constants.KEY_CHILDREN: [child.to_dict() for child in self.children],
         }
 
     @classmethod
     def from_dict(cls, data: Dict) -> "MerkleNode":
         """Create node from dictionary."""
         node = cls(
-            path=data["path"], hash=data["hash"], is_file=data["is_file"], size=data.get("size", 0)
+            path=data[constants.KEY_PATH],
+            hash=data[constants.KEY_HASH],
+            is_file=data[constants.KEY_IS_FILE],
+            size=data.get(constants.KEY_SIZE, 0),
         )
-        node.children = [cls.from_dict(child) for child in data.get("children", [])]
+        node.children = [cls.from_dict(child) for child in data.get(constants.KEY_CHILDREN, [])]
         return node
 
 
@@ -76,72 +87,19 @@ class MerkleDAG:
         if max_file_bytes is None:
             try:
                 max_file_bytes = int(
-                    os.environ.get("CODE_SEARCH_MAX_FILE_BYTES", DEFAULT_MAX_FILE_BYTES)
+                    os.environ.get(constants.ENV_CODE_SEARCH_MAX_FILE_BYTES, DEFAULT_MAX_FILE_BYTES)
                 )
             except ValueError:
                 max_file_bytes = DEFAULT_MAX_FILE_BYTES
         self.max_file_bytes = max_file_bytes
         self.pathspec: Optional[pathspec.PathSpec] = load_pathspec(self.root_path)
-        self.ignore_patterns: Set[str] = {
-            "__pycache__",
-            ".git",
-            ".hg",
-            ".svn",
-            "compile_commands.json",
-            "vcpkg",
-            ".venv",
-            ".venvs",
-            "venv",
-            "env",
-            ".env",
-            ".direnv",
-            "node_modules",
-            ".pnpm-store",
-            ".yarn",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".ruff_cache",
-            ".pytype",
-            ".ipynb_checkpoints",
-            "build",
-            "dist",
-            "out",
-            "public",
-            ".next",
-            ".nuxt",
-            ".svelte-kit",
-            ".angular",
-            ".astro",
-            ".vite",
-            ".cache",
-            ".parcel-cache",
-            ".turbo",
-            "coverage",
-            ".coverage",
-            ".nyc_output",
-            ".gradle",
-            ".idea",
-            ".vscode",
-            ".docusaurus",
-            ".vercel",
-            ".serverless",
-            ".terraform",
-            ".mvn",
-            ".tox",
-            "target",
-            "bin",
-            "obj",
-            "*.pyc",
-            "*.pyo",
-            ".DS_Store",
-            "Thumbs.db",
-        }
+        self.ignore_patterns: Set[str] = default_ignore_patterns(include_files=True)
 
     def should_ignore(self, path: Path) -> bool:
         """Check if a path should be ignored.
 
         Built-in name patterns are checked first (cheap), then any
-        gitignore-syntax rules from `.claude-context-ignore` (root-relative).
+        gitignore-syntax rules from `.code-search-ignore` (root-relative).
 
         Args:
             path: Path to check
@@ -190,8 +148,8 @@ class MerkleDAG:
         size = 0
 
         try:
-            with open(file_path, "rb") as f:
-                while chunk := f.read(8192):
+            with open(file_path, constants.FILE_MODE_READ_BINARY) as f:
+                while chunk := f.read(constants.HASH_READ_BUFFER_BYTES):
                     sha256.update(chunk)
                     size += len(chunk)
         except (IOError, OSError):
@@ -239,7 +197,7 @@ class MerkleDAG:
 
         # Calculate relative path
         if path == self.root_path:
-            relative_path = "."
+            relative_path = constants.KEY_PROJECT_ROOT
         else:
             relative_path = str(path.relative_to(self.root_path))
 
@@ -285,8 +243,8 @@ class MerkleDAG:
         self.root_node = self.build_node(self.root_path)
         # For the root node, use "." as its path
         if self.root_node:
-            self.root_node.path = "."
-            self.nodes["."] = self.root_node
+            self.root_node.path = constants.KEY_PROJECT_ROOT
+            self.nodes[constants.KEY_PROJECT_ROOT] = self.root_node
 
     def get_file_hashes(self) -> Dict[str, str]:
         """Get a dictionary of file paths to their hashes.
@@ -311,10 +269,10 @@ class MerkleDAG:
             Dictionary representation
         """
         return {
-            "root_path": str(self.root_path),
-            "root_node": self.root_node.to_dict() if self.root_node else None,
-            "file_count": sum(1 for n in self.nodes.values() if n.is_file),
-            "total_size": sum(n.size for n in self.nodes.values() if n.is_file),
+            constants.KEY_ROOT_PATH: str(self.root_path),
+            constants.KEY_ROOT_NODE: self.root_node.to_dict() if self.root_node else None,
+            constants.KEY_FILE_COUNT: sum(1 for n in self.nodes.values() if n.is_file),
+            constants.KEY_TOTAL_SIZE: sum(n.size for n in self.nodes.values() if n.is_file),
         }
 
     @classmethod
@@ -327,9 +285,9 @@ class MerkleDAG:
         Returns:
             MerkleDAG instance
         """
-        dag = cls(data["root_path"])
-        if data["root_node"]:
-            dag.root_node = MerkleNode.from_dict(data["root_node"])
+        dag = cls(data[constants.KEY_ROOT_PATH])
+        if data[constants.KEY_ROOT_NODE]:
+            dag.root_node = MerkleNode.from_dict(data[constants.KEY_ROOT_NODE])
 
             # Rebuild nodes dictionary
             def add_to_nodes(node: MerkleNode):
@@ -370,9 +328,9 @@ class MerkleDAG:
         dir_nodes = [n for n in self.nodes.values() if not n.is_file]
 
         return {
-            "total_nodes": len(self.nodes),
-            "file_count": len(file_nodes),
-            "directory_count": len(dir_nodes),
-            "total_size": sum(n.size for n in file_nodes),
-            "root_hash": self.get_root_hash(),
+            constants.KEY_TOTAL_NODES: len(self.nodes),
+            constants.KEY_FILE_COUNT: len(file_nodes),
+            constants.KEY_DIRECTORY_COUNT: len(dir_nodes),
+            constants.KEY_TOTAL_SIZE: sum(n.size for n in file_nodes),
+            constants.KEY_ROOT_HASH: self.get_root_hash(),
         }

@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from code_search_local import constants
 from code_search_local.chunking.multi_language_chunker import MultiLanguageChunker
+from tests import constants as test_constants
+from tests.helpers import chunk_sample
 
 
 @pytest.mark.integration
@@ -18,11 +21,11 @@ class TestMetadataRichness:
         # Create a test file in a nested directory structure
         test_dir = tempfile.mkdtemp()
         try:
-            project_dir = Path(test_dir) / "test_project"
-            src_dir = project_dir / "src" / "auth"
+            project_dir = Path(test_dir) / test_constants.PATH_TEST_PROJECT
+            src_dir = project_dir / test_constants.PATH_SRC / test_constants.KEY_AUTH
             src_dir.mkdir(parents=True)
 
-            test_file = src_dir / "user_auth.py"
+            test_file = src_dir / test_constants.PATH_USER_AUTH_PY
             test_code = '''
 from typing import Optional
 import hashlib
@@ -80,9 +83,10 @@ class UserAuthenticator:
             for chunk in chunks:
                 # Check relative path
                 assert chunk.relative_path is not None, "Relative path should be set"
-                assert "auth" in chunk.relative_path or "user_auth" in chunk.relative_path, (
-                    "Relative path should include directory structure"
-                )
+                assert (
+                    test_constants.KEY_AUTH in chunk.relative_path
+                    or test_constants.VALUE_USER_AUTH in chunk.relative_path
+                ), "Relative path should include directory structure"
 
                 # Check folder structure
                 assert isinstance(chunk.folder_structure, list), "Folder structure should be a list"
@@ -108,11 +112,16 @@ class UserAuthenticator:
         """Test that folder structure is correctly captured."""
         test_dir = tempfile.mkdtemp()
         try:
-            project_dir = Path(test_dir) / "project"
-            nested_dir = project_dir / "src" / "components" / "auth"
+            project_dir = Path(test_dir) / constants.KEY_PROJECT
+            nested_dir = (
+                project_dir
+                / test_constants.PATH_SRC
+                / test_constants.PATH_COMPONENTS
+                / test_constants.KEY_AUTH
+            )
             nested_dir.mkdir(parents=True)
 
-            test_file = nested_dir / "authenticator.py"
+            test_file = nested_dir / test_constants.PATH_AUTHENTICATOR_PY
             test_file.write_text("def authenticate(): pass")
 
             chunker = MultiLanguageChunker(str(project_dir))
@@ -125,15 +134,15 @@ class UserAuthenticator:
                 if chunk.folder_structure:
                     # Should include some part of the nested path
                     assert (
-                        "src" in chunk.folder_structure
-                        or "components" in chunk.folder_structure
-                        or "auth" in chunk.folder_structure
+                        test_constants.PATH_SRC in chunk.folder_structure
+                        or test_constants.PATH_COMPONENTS in chunk.folder_structure
+                        or test_constants.KEY_AUTH in chunk.folder_structure
                     ), f"Folder structure should reflect nesting, got {chunk.folder_structure}"
 
         finally:
             shutil.rmtree(test_dir)
 
-    def test_metadata_imports_extraction(self):
+    def test_metadata_imports_extraction(self, tmp_path):
         """Test that imports are extracted in metadata."""
         test_code = """
 import os
@@ -147,25 +156,14 @@ def my_function():
     pass
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            import os
+        chunks = chunk_sample(tmp_path, test_code)
 
-            f.write(test_code)
-            f.flush()
+        assert len(chunks) > 0, "Should generate chunks with imports"
 
-            try:
-                chunker = MultiLanguageChunker(os.path.dirname(f.name))
-                chunks = chunker.chunk_file(f.name)
-
-                assert len(chunks) > 0, "Should generate chunks with imports"
-
-                # Check that imports attribute exists and is iterable
-                for chunk in chunks:
-                    assert hasattr(chunk, "imports"), "Chunks should have imports attribute"
-                    # Imports should be a list or None
-                    assert chunk.imports is None or isinstance(chunk.imports, (list, set)), (
-                        "Imports should be None or a list/set"
-                    )
-
-            finally:
-                os.unlink(f.name)
+        # Check that imports attribute exists and is iterable
+        for chunk in chunks:
+            assert hasattr(chunk, "imports"), "Chunks should have imports attribute"
+            # Imports should be a list or None
+            assert chunk.imports is None or isinstance(chunk.imports, (list, set)), (
+                "Imports should be None or a list/set"
+            )

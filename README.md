@@ -47,7 +47,7 @@ The `rocm:setup` script supplies `--source <checkout>` and `--backend rocm`. For
 
 This downloads the model when needed, validates real inference, installs and starts `code-search-local.service`, and registers the authenticated HTTP MCP connection. The unit's `ExecStart` uses `<checkout>/.venvs/rocm/bin/python -m code_search_local serve`, and its `WorkingDirectory` is the checkout. No release wheel, tarball, `hatch build`, or PyPI publication is needed.
 
-Successful setup ends with JSON containing `mode: "source"`, `source`, `runtime`, `backend`, `service`, `url`, `agent_harness` and `installation_origin`. The default endpoint is `http://127.0.0.1:8000/mcp`. The service uses the checkout until you explicitly change its installation; keep that directory and its selected environment in place.
+Successful setup ends with JSON containing `mode: "source"`, `source`, `runtime`, `backend`, `service`, `url`, `agent_harness`, `harness_configs` and `installation_origin`. `harness_configs` lists the configuration file updated for each selected agent. The default endpoint is `http://127.0.0.1:8000/mcp`. The service uses the checkout until you explicitly change its installation; keep that directory and its selected environment in place.
 
 ### 4. Index and search a project
 
@@ -57,7 +57,7 @@ From the checkout, replace the example directory with an existing project root:
 hatch run rocm:cli service status
 hatch run rocm:cli index "$HOME/code/my-project"
 hatch run rocm:cli search 'where are authentication tokens validated?' \
-  --project "$HOME/code/my-project" -k 5
+  --project "$HOME/code/my-project" --max-results 5
 hatch run rocm:cli stats --project "$HOME/code/my-project"
 ```
 
@@ -287,9 +287,10 @@ The default revision `main` is resolved to a pinned snapshot on acquisition. An 
 
 1. With `--source`, synchronizes the editable checkout in its `.venvs/<backend>` environment using the checkout's lockfile. Otherwise, creates or reuses a versioned release environment under `<storage>/runtimes/` from the bundled lockfile.
 2. Prefetches supported parser grammars and validates actual model inference before replacing a running service.
-3. Saves effective settings to `$XDG_CONFIG_HOME/code-search-local/config.json`, normally `~/.config/code-search-local/config.json`.
-4. Creates a private token at `<storage>/auth.json` and installs the user unit at `$XDG_CONFIG_HOME/systemd/user/code-search-local.service`.
-5. Enables and starts the user service, then registers `code-search-local` with the selected clients.
+3. Stops the existing service before replacing its settings and unit, once validation succeeds.
+4. Saves effective settings to `$XDG_CONFIG_HOME/code-search-local/config.json`, normally `~/.config/code-search-local/config.json`, ensures a private token at `<storage>/auth.json`, and installs the user unit at `$XDG_CONFIG_HOME/systemd/user/code-search-local.service`.
+5. Reloads systemd, enables and starts the service, then waits for its authenticated health endpoint. Restoring existing indexes can take longer than a fresh startup. Setup reports progress and allows 300 seconds by default; `--startup-timeout SECONDS` changes this limit. Each health request has a bounded timeout, and an exited/crashing service fails immediately with recent journal output.
+6. Adds or updates `code-search-local` in every selected harness, then reports the configuration paths in the final JSON. Model-validation output alone does not mean setup has completed.
 
 Registration is optional and user-scoped. `--agent-harness none` is the default; it leaves agent configurations untouched. Repeat the flag to select particular clients, or use `all` for Codex, Claude and OpenCode:
 
@@ -313,6 +314,16 @@ Configuration paths:
 Existing files receive private `.code-search-local.bak` backups. Codex TOML comments are preserved; OpenCode JSONC is accepted and normalized to formatted JSON when changed, with the original comments retained in the backup. Stale Code Search Local entries in the applicable OpenCode config files are removed before adding the replacement to the selected effective config. A failed registration write restores that harness's MCP configuration. Setup records selected config paths in `$XDG_CONFIG_HOME/code-search-local/installation.json` so uninstall can also clean up custom profiles used earlier. Project-local and administrator-managed harness configurations are outside this user-scoped setup.
 
 Repeat setup with the desired harness flags to add another client or apply new settings. An unchanged successful release setup reuses the running service; source setup restarts it to load current code. Neither opening another project nor registering another harness creates another daemon.
+
+For example, after a Claude-only source setup, this enables CPU fallback and refreshes Claude, Codex and OpenCode:
+
+```sh
+hatch run rocm:setup --agent-harness all --cpu-fallback
+# Allow ten minutes if restoring a large existing index needs longer:
+hatch run rocm:setup --agent-harness all --cpu-fallback --startup-timeout 600
+```
+
+If startup fails or exceeds the limit, setup exits with an error before changing harness registrations. The new service configuration remains installed and the service may still be starting. Inspect the reported journal output and rerun setup after resolving the failure (or with a longer startup timeout) to complete registration.
 
 ## OpenCode setup and usage
 
@@ -432,8 +443,10 @@ Requests for one project run in order; different projects can be active together
 code-search-local search 'retry failed HTTP requests'
 
 # Another project, up to five results.
-code-search-local search 'database transaction rollback' --project "$HOME/code/api" -k 5
+code-search-local search 'database transaction rollback' --project "$HOME/code/api" --max-results 5
 ```
+
+`--max-results` (short form `-k`) accepts 1–100 results and defaults to 10. Use `code-search-local search --help` for all search options; every command exposes its flag descriptions through `--help`.
 
 Search prints JSON results containing scores and chunk metadata, including source locations. It reads the last committed generation, which remains available while indexing runs. Finish the initial index before searching a new project.
 
@@ -607,26 +620,26 @@ Uninstall is repeatable. If a harness config is malformed or its native plugin r
 
 ### Review and clean current and legacy installations
 
-[`scripts/clean-existing-installations-and-configs.py`](scripts/clean-existing-installations-and-configs.py) inventories Linux installations under both `code-search-local` and the former `claude-context-local` name, including case and underscore variants and the legacy `claude-code-search` storage directories. Run it from this checkout using an existing project environment:
+[`scripts/clean_existing_installations_and_configs.py`](scripts/clean_existing_installations_and_configs.py) inventories Linux installations under both `code-search-local` and the former `claude-context-local` name, including case and underscore variants and the legacy `claude-code-search` storage directories. Run it from this checkout using an existing project environment:
 
 ```sh
-.venvs/cpu/bin/python scripts/clean-existing-installations-and-configs.py --dry-run
+.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run
 
 # Machine-readable inventory; includes planned actions and references needing review:
-.venvs/cpu/bin/python scripts/clean-existing-installations-and-configs.py --dry-run --json
+.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run --json
 
 # Additional project-local configs/custom harness profiles; both options are repeatable:
-.venvs/cpu/bin/python scripts/clean-existing-installations-and-configs.py --dry-run \
+.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run \
   --project-root /path/to/workspace --scan-root /path/to/custom/profile
 
 # Preview index removal while retaining runtime environments and packages:
-.venvs/cpu/bin/python scripts/clean-existing-installations-and-configs.py --dry-run --remove-indexes
+.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run --remove-indexes
 
 # Preview uninstalling runtime/CLI packages while retaining indexes:
-.venvs/cpu/bin/python scripts/clean-existing-installations-and-configs.py --dry-run --remove-runtime-packages
+.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run --remove-runtime-packages
 
 # Preview both optional removals (models and source environments are always retained):
-.venvs/cpu/bin/python scripts/clean-existing-installations-and-configs.py --dry-run --remove-all
+.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run --remove-all
 ```
 
 Use `.venvs/cuda/bin/python` or `.venvs/rocm/bin/python` if that is your installed environment. Dependencies come from `pyproject.toml`; this script reuses Click, json5, tomlkit and uv without installing anything during discovery. No bundle or running service is required.
@@ -806,6 +819,10 @@ hatch run coverage
 hatch run lint
 hatch build
 ```
+
+`hatch run lint` also runs the [code-rule audit](scripts/check_code_rules.py); use `hatch run rules` to run it alone. Operational values (schema keys, paths, protocol identifiers, defaults and timing budgets) live in named constants. Docstrings and explanatory prose stay inline. Shared behavior belongs in helpers when a 5+ line block occurs three times, or an 8+ line block occurs twice. The audit checks common operational-literal syntax and exact duplication, including repeated blocks within one file; review also checks parameterizable variants. Parser fixture source files are input data, not executed application code.
+
+The project rule lives in [.agents/rules/constants-and-duplication.md](.agents/rules/constants-and-duplication.md), with `.claude/rules` symlinked to that directory. Application contracts are in `src/code_search_local/constants.py`; test-only inputs and budgets are in `tests/constants.py`. The standalone cleanup script keeps its own constants so it can inspect a broken or absent installation.
 
 See [tests/README.md](tests/README.md) for the real two-Claude, GPU, systemd, marketplace and installer acceptance lanes, and [docs/validation.md](docs/validation.md) for recorded results. CI runs deterministic coverage and artifact installation checks. The manually dispatched release workflow requires acceptance checks before optional PyPI publication.
 

@@ -13,6 +13,10 @@ hatch run lint
 
 The default suite covers languages, routing, fair scheduling, cache identity, queue bounds, cancellation, concurrent searches/updates, deletion-only updates, watch reconciliation, JSON/Click/Textual behavior, IPC loss/restarts, authentication, migration and transactional rollback. HTTP MCP discovery checks all nine tools' intent examples, follow-up guidance, parameter descriptions, defaults and read-only/destructive annotations; initialization checks the server-level indexing instructions. Crash tests kill real subprocesses at four commit boundaries and verify complete old/new generations.
 
+## Code rules
+
+`hatch run rules` checks operational literals and uses Pylint's duplicate finder with the project's inclusive thresholds: five code lines at three occurrences, or eight at two. It also checks repeated blocks within a file. `tests/unit/test_code_rules.py` verifies these boundaries and that docstrings/prose remain allowed while inline JSON keys, paths, options and timing budgets are rejected. The checker supplements review of semantic duplicates; it is not a proof that every possible syntax or parameterized variant is covered. Parser fixture files under `test_data` and `fixtures` are intentionally treated as input data.
+
 ## Required acceptance lanes
 
 The standalone migration cleanup script is tested separately with discovery-only fixtures. Its flag matrix verifies that every mode, including the default with no removal flags, plans systemd service/activation-unit uninstall (stop/disable and removal of unit files/enablement links), MCP and plugin unregistration in Claude/Codex/OpenCode, and installed plugin cache removal. Only indexes and runtime packages are optional:

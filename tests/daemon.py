@@ -8,23 +8,59 @@ from pathlib import Path
 import click
 import uvicorn
 
+from code_search_local import constants
 from code_search_local.config import Settings
 from code_search_local.engine import Engine
 from code_search_local.events import Publisher, ipc_address
 from code_search_local.models import SentenceModel
 from code_search_local.service import create_app, token_for
+from tests import constants as test_constants
 from tests.fakes import FakeModel
 
 
 @click.command()
-@click.option("--storage", required=True)
-@click.option("--port", required=True, type=int)
-@click.option("--fake", is_flag=True)
-@click.option("--offline", is_flag=True)
-@click.option("--backend", default="cpu")
-@click.option("--model", default="google/embeddinggemma-300m")
-@click.option("--gate", default=0, type=int)
-@click.option("--crash-phase", default=None)
+@click.option(
+    constants.OPTION_STORAGE,
+    required=True,
+    help="Directory for this test daemon's indexes, models and state.",
+)
+@click.option(
+    constants.OPTION_PORT, required=True, type=int, help="Loopback HTTP port for the test daemon."
+)
+@click.option(
+    test_constants.OPTION_FAKE,
+    is_flag=True,
+    help="Use deterministic fake embeddings instead of loading a real model.",
+)
+@click.option(
+    test_constants.OPTION_OFFLINE,
+    is_flag=True,
+    help="Require cached model files and forbid model downloads.",
+)
+@click.option(
+    constants.OPTION_BACKEND,
+    default=constants.BACKEND_CPU,
+    show_default=True,
+    help="Model execution backend: auto, cpu, cuda, rocm or mps.",
+)
+@click.option(
+    constants.OPTION_MODEL,
+    default=constants.DEFAULT_MODEL_ID,
+    show_default=True,
+    help="Hugging Face embedding model repository ID used without --fake.",
+)
+@click.option(
+    test_constants.OPTION_GATE,
+    default=0,
+    type=int,
+    show_default=True,
+    help="Wait for this many running indexing jobs before model creation (120-second timeout); 0 disables the barrier.",
+)
+@click.option(
+    test_constants.OPTION_CRASH_PHASE,
+    default=None,
+    help="Exit with code 86 at a publication phase: vector, metadata, before-manifest or after-manifest. Omit for normal execution.",
+)
 def main(storage, port, fake, offline, backend, model, gate, crash_phase):
     logging.basicConfig(level=logging.INFO)
     if not fake:
@@ -40,9 +76,14 @@ def main(storage, port, fake, offline, backend, model, gate, crash_phase):
         def audited_get(url, temp_file, **kwargs):
             before = temp_file.tell()
             result = original_get(url, temp_file, **kwargs)
-            event = {"blob": Path(temp_file.name).name, "bytes": temp_file.tell() - before}
+            event = {
+                test_constants.KEY_BLOB: Path(temp_file.name).name,
+                test_constants.KEY_BYTES: temp_file.tell() - before,
+            }
             with audit_lock:
-                with (Path(storage) / "download-transfers.jsonl").open("a") as audit:
+                with (Path(storage) / test_constants.PATH_DOWNLOAD_TRANSFERS_JSONL).open(
+                    test_constants.FILE_MODE_A
+                ) as audit:
                     audit.write(json.dumps(event, sort_keys=True) + "\n")
             return result
 
@@ -59,16 +100,25 @@ def main(storage, port, fake, offline, backend, model, gate, crash_phase):
 
         def write_index(*args, **kwargs):
             original_write(*args, **kwargs)
-            if crash_phase == "vector":
+            if crash_phase == test_constants.VALUE_VECTOR:
                 os._exit(86)
 
         def atomic(path, value, **kwargs):
-            if path.name == "current.json" and crash_phase == "before-manifest":
+            if (
+                path.name == constants.PATH_CURRENT_JSON
+                and crash_phase == test_constants.VALUE_BEFORE_MANIFEST
+            ):
                 os._exit(86)
             original_json(path, value, **kwargs)
-            if path.name == "generation.json" and crash_phase == "metadata":
+            if (
+                path.name == constants.PATH_GENERATION_JSON
+                and crash_phase == constants.KEY_METADATA
+            ):
                 os._exit(86)
-            if path.name == "current.json" and crash_phase == "after-manifest":
+            if (
+                path.name == constants.PATH_CURRENT_JSON
+                and crash_phase == test_constants.VALUE_AFTER_MANIFEST
+            ):
                 os._exit(86)
 
         faiss.write_index = write_index
@@ -77,14 +127,19 @@ def main(storage, port, fake, offline, backend, model, gate, crash_phase):
 
     def factory(settings, report):
         if gate:
-            deadline = time.monotonic() + 120
+            deadline = time.monotonic() + test_constants.MODEL_GATE_TIMEOUT_SECONDS
             while True:
-                jobs = holder["engine"].state.snapshot()["jobs"].values()
-                if sum(job["status"] == "running" for job in jobs) >= gate:
+                jobs = (
+                    holder[test_constants.KEY_ENGINE].state.snapshot()[constants.KEY_JOBS].values()
+                )
+                if (
+                    sum(job[constants.KEY_STATUS] == constants.STATUS_RUNNING for job in jobs)
+                    >= gate
+                ):
                     break
                 if time.monotonic() > deadline:
                     raise RuntimeError("Concurrent client scheduling barrier timed out")
-                time.sleep(0.02)
+                time.sleep(test_constants.MODEL_GATE_POLL_SECONDS)
         return (FakeModel if fake else SentenceModel)(settings, report)
 
     settings = Settings(
@@ -97,7 +152,7 @@ def main(storage, port, fake, offline, backend, model, gate, crash_phase):
         offline=offline,
     )
     engine = Engine(settings, model_factory=factory, recover=False)
-    holder["engine"] = engine
+    holder[test_constants.KEY_ENGINE] = engine
     publisher = Publisher(ipc_address(settings.root), engine.state.snapshot)
     engine.state.publish = publisher.publish
     try:

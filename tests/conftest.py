@@ -5,7 +5,9 @@ from typing import Dict
 
 import pytest
 
+from code_search_local import constants
 from code_search_local.chunking.multi_language_chunker import MultiLanguageChunker
+from tests import constants as test_constants
 from tests.fixtures.sample_code import (
     SAMPLE_API_MODULE,
     SAMPLE_AUTH_MODULE,
@@ -16,20 +18,20 @@ from tests.fixtures.sample_code import (
 
 @pytest.fixture(autouse=True)
 def isolated_paths(tmp_path, monkeypatch):
-    monkeypatch.setenv("CODE_SEARCH_STORAGE", str(tmp_path / "storage"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
-    monkeypatch.delenv("OPENCODE_CONFIG", raising=False)
-    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv(constants.ENV_CODE_SEARCH_STORAGE, str(tmp_path / constants.KEY_STORAGE))
+    monkeypatch.setenv(constants.ENV_XDG_CONFIG_HOME, str(tmp_path / test_constants.PATH_CONFIG))
+    monkeypatch.setenv(constants.ENV_XDG_RUNTIME_DIR, str(tmp_path / constants.KEY_RUNTIME))
+    monkeypatch.setenv(constants.ENV_CODEX_HOME, str(tmp_path / constants.HARNESS_CODEX))
+    monkeypatch.setenv(constants.ENV_CLAUDE_CONFIG_DIR, str(tmp_path / constants.HARNESS_CLAUDE))
+    monkeypatch.delenv(constants.ENV_OPENCODE_CONFIG, raising=False)
+    monkeypatch.delenv(constants.ENV_OPENCODE_CONFIG_DIR, raising=False)
 
 
 # Test fixtures
 @pytest.fixture
 def temp_project_dir(tmp_path: Path) -> Path:
     """Each test gets a workspace owned and cleaned up by pytest."""
-    project = tmp_path / "test_project"
+    project = tmp_path / test_constants.PATH_TEST_PROJECT
     project.mkdir()
     return project
 
@@ -41,47 +43,47 @@ def sample_codebase(temp_project_dir: Path) -> Dict[str, Path]:
         pytest.skip("Sample code not available")
 
     # Create directory structure
-    src_dir = temp_project_dir / "src"
+    src_dir = temp_project_dir / test_constants.PATH_SRC
     src_dir.mkdir()
 
-    auth_dir = src_dir / "auth"
+    auth_dir = src_dir / test_constants.KEY_AUTH
     auth_dir.mkdir()
 
-    database_dir = src_dir / "database"
+    database_dir = src_dir / test_constants.KEY_DATABASE
     database_dir.mkdir()
 
-    api_dir = src_dir / "api"
+    api_dir = src_dir / test_constants.KEY_API
     api_dir.mkdir()
 
-    utils_dir = src_dir / "utils"
+    utils_dir = src_dir / test_constants.KEY_UTILS
     utils_dir.mkdir()
 
     # Create Python files with sample code
     files = {}
 
     # Authentication module
-    auth_file = auth_dir / "authenticator.py"
+    auth_file = auth_dir / test_constants.PATH_AUTHENTICATOR_PY
     auth_file.write_text(SAMPLE_AUTH_MODULE)
-    files["auth"] = auth_file
+    files[test_constants.KEY_AUTH] = auth_file
 
     # Database module
-    db_file = database_dir / "manager.py"
+    db_file = database_dir / test_constants.PATH_MANAGER_PY
     db_file.write_text(SAMPLE_DATABASE_MODULE)
-    files["database"] = db_file
+    files[test_constants.KEY_DATABASE] = db_file
 
     # API module
-    api_file = api_dir / "endpoints.py"
+    api_file = api_dir / test_constants.PATH_ENDPOINTS_PY
     api_file.write_text(SAMPLE_API_MODULE)
-    files["api"] = api_file
+    files[test_constants.KEY_API] = api_file
 
     # Utils module
-    utils_file = utils_dir / "helpers.py"
+    utils_file = utils_dir / test_constants.PATH_HELPERS_PY
     utils_file.write_text(SAMPLE_UTILS_MODULE)
-    files["utils"] = utils_file
+    files[test_constants.KEY_UTILS] = utils_file
 
     # Add __init__.py files
     for directory in [src_dir, auth_dir, database_dir, api_dir, utils_dir]:
-        init_file = directory / "__init__.py"
+        init_file = directory / test_constants.PATH_INIT_PY
         init_file.write_text("# Package init file")
 
     return files

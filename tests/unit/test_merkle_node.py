@@ -2,7 +2,9 @@
 
 from unittest import TestCase
 
+from code_search_local import constants
 from code_search_local.merkle.merkle_dag import MerkleNode
+from tests import constants as test_constants
 
 
 class TestMerkleNode(TestCase):
@@ -12,8 +14,8 @@ class TestMerkleNode(TestCase):
         """Test creating a Merkle node."""
         node = MerkleNode(path="test.py", hash="abc123", is_file=True, size=100)
 
-        assert node.path == "test.py"
-        assert node.hash == "abc123"
+        assert node.path == test_constants.VALUE_TEST_PY
+        assert node.hash == test_constants.VALUE_ABC123
         assert node.is_file is True
         assert node.size == 100
         assert len(node.children) == 0
@@ -30,10 +32,10 @@ class TestMerkleNode(TestCase):
         data = parent.to_dict()
 
         # Verify structure
-        assert data["path"] == "parent"
-        assert data["hash"] == "parent_hash"
-        assert data["is_file"] is False
-        assert len(data["children"]) == 2
+        assert data[constants.KEY_PATH] == test_constants.VALUE_PARENT
+        assert data[constants.KEY_HASH] == test_constants.VALUE_PARENT_HASH
+        assert data[constants.KEY_IS_FILE] is False
+        assert len(data[constants.KEY_CHILDREN]) == 2
 
         # Deserialize
         restored = MerkleNode.from_dict(data)
@@ -42,5 +44,5 @@ class TestMerkleNode(TestCase):
         assert restored.path == parent.path
         assert restored.hash == parent.hash
         assert len(restored.children) == 2
-        assert restored.children[0].path == "child1.py"
-        assert restored.children[1].path == "child2.py"
+        assert restored.children[0].path == test_constants.VALUE_CHILD1_PY
+        assert restored.children[1].path == test_constants.VALUE_CHILD2_PY

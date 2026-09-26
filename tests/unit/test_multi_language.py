@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from code_search_local import constants
 from code_search_local.chunking.multi_language_chunker import MultiLanguageChunker
+from tests import constants as test_constants
 
 
 class TestMultiLanguageChunker:
@@ -18,7 +20,11 @@ class TestMultiLanguageChunker:
     @pytest.fixture
     def test_data_dir(self):
         """Get test data directory."""
-        return Path(__file__).parent.parent / "test_data" / "multi_language"
+        return (
+            Path(__file__).parent.parent
+            / test_constants.PATH_TEST_DATA
+            / test_constants.PATH_MULTI_LANGUAGE
+        )
 
     def test_supported_extensions(self, chunker):
         """Test that all required extensions are supported."""
@@ -41,49 +47,55 @@ class TestMultiLanguageChunker:
 
     def test_chunk_python_file(self, chunker, test_data_dir):
         """Test chunking Python file."""
-        file_path = test_data_dir / "example.py"
+        file_path = test_data_dir / test_constants.PATH_EXAMPLE_PY
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
         # Should find the class and functions
         chunk_types = {chunk.chunk_type for chunk in chunks}
-        assert "function" in chunk_types or "method" in chunk_types
-        assert "class" in chunk_types
+        assert constants.KEY_FUNCTION in chunk_types or constants.SYNTAX_METHOD in chunk_types
+        assert constants.SYNTAX_CLASS in chunk_types
 
     def test_chunk_javascript_file(self, chunker, test_data_dir):
         """Test chunking JavaScript file."""
-        file_path = test_data_dir / "example.js"
+        file_path = test_data_dir / test_constants.PATH_EXAMPLE_JS
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
         # Should find functions and class
         chunk_names = {chunk.name for chunk in chunks if chunk.name}
-        assert "calculateSum" in chunk_names
-        assert "Calculator" in chunk_names
+        assert test_constants.VALUE_CALCULATE_SUM in chunk_names
+        assert test_constants.VALUE_CALCULATOR in chunk_names
 
     def test_chunk_typescript_file(self, chunker, test_data_dir):
         """Test chunking TypeScript file."""
-        file_path = test_data_dir / "example.ts"
+        file_path = test_data_dir / test_constants.PATH_EXAMPLE_TS
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
         # Should find interface, class, and functions
         chunk_types = {chunk.chunk_type for chunk in chunks}
-        assert any(t in chunk_types for t in ["class", "interface", "function"])
+        assert any(
+            t in chunk_types
+            for t in [constants.SYNTAX_CLASS, constants.SYNTAX_INTERFACE, constants.KEY_FUNCTION]
+        )
 
     def test_chunk_jsx_file(self, chunker, test_data_dir):
         """Test chunking JSX file."""
-        file_path = test_data_dir / "Component.jsx"
+        file_path = test_data_dir / test_constants.PATH_COMPONENT_JSX
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
         # Should find React components
         chunk_names = {chunk.name for chunk in chunks if chunk.name}
-        assert "Counter" in chunk_names or "UserCard" in chunk_names
+        assert (
+            test_constants.VALUE_COUNTER in chunk_names
+            or test_constants.VALUE_USER_CARD in chunk_names
+        )
 
     def test_chunk_tsx_file(self, chunker, test_data_dir):
         """Test chunking TSX file."""
-        file_path = test_data_dir / "Component.tsx"
+        file_path = test_data_dir / test_constants.PATH_COMPONENT_TSX
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
@@ -93,17 +105,21 @@ class TestMultiLanguageChunker:
 
     def test_chunk_svelte_file(self, chunker, test_data_dir):
         """Test chunking Svelte file."""
-        file_path = test_data_dir / "App.svelte"
+        file_path = test_data_dir / test_constants.PATH_APP_SVELTE
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
         # Should find script and style blocks
         chunk_types = {chunk.chunk_type for chunk in chunks}
-        assert "script" in chunk_types or "style" in chunk_types or len(chunks) > 0
+        assert (
+            constants.SYNTAX_SCRIPT in chunk_types
+            or constants.SYNTAX_STYLE in chunk_types
+            or len(chunks) > 0
+        )
 
     def test_chunk_java_file(self, chunker, test_data_dir):
         """Test chunking Java file."""
-        file_path = test_data_dir / "Calculator.java"
+        file_path = test_data_dir / test_constants.PATH_CALCULATOR_JAVA
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
@@ -111,14 +127,17 @@ class TestMultiLanguageChunker:
         chunk_names = {chunk.name for chunk in chunks if chunk.name}
         chunk_types = {chunk.chunk_type for chunk in chunks}
 
-        assert "Calculator" in chunk_names
-        assert "MathOperations" in chunk_names
-        assert "Operation" in chunk_names
-        assert any(t in chunk_types for t in ["class", "interface", "enum"])
+        assert test_constants.VALUE_CALCULATOR in chunk_names
+        assert test_constants.VALUE_MATH_OPERATIONS in chunk_names
+        assert test_constants.VALUE_OPERATION in chunk_names
+        assert any(
+            t in chunk_types
+            for t in [constants.SYNTAX_CLASS, constants.SYNTAX_INTERFACE, constants.SYNTAX_ENUM]
+        )
 
     def test_chunk_go_file(self, chunker, test_data_dir):
         """Test chunking Go file."""
-        file_path = test_data_dir / "calculator.go"
+        file_path = test_data_dir / test_constants.PATH_CALCULATOR_GO
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
@@ -129,52 +148,36 @@ class TestMultiLanguageChunker:
         assert any(name in chunk_names for name in ["Calculator", "CalculateSum", "NewCalculator"])
         assert len(chunk_names) > 0
         assert (
-            any(t in chunk_types for t in ["function", "method", "type", "interface"])
+            any(
+                t in chunk_types
+                for t in [
+                    constants.KEY_FUNCTION,
+                    constants.SYNTAX_METHOD,
+                    constants.KEY_TYPE,
+                    constants.SYNTAX_INTERFACE,
+                ]
+            )
             or len(chunks) > 0
         )
 
-    def test_chunk_c_file(self, chunker, test_data_dir):
-        """Test chunking C file."""
-        file_path = test_data_dir / "calculator.c"
-        chunks = chunker.chunk_file(str(file_path))
-
-        # C parser may not be available, so chunks might be empty
-        if len(chunks) > 0:
+    @pytest.mark.parametrize(
+        "filename",
+        (
+            test_constants.PATH_CALCULATOR_C,
+            test_constants.PATH_CALCULATOR_CPP,
+            test_constants.PATH_CALCULATOR_CS,
+        ),
+    )
+    def test_chunk_c_family_file(self, chunker, test_data_dir, filename):
+        chunks = chunker.chunk_file(str(test_data_dir / filename))
+        if chunks:
             chunk_names = {chunk.name for chunk in chunks if chunk.name}
             chunk_types = {chunk.chunk_type for chunk in chunks}
-
-            assert len(chunk_names) > 0 or len(chunk_types) > 0
-        # If no chunks, that's okay - parser not available
-
-    def test_chunk_cpp_file(self, chunker, test_data_dir):
-        """Test chunking C++ file."""
-        file_path = test_data_dir / "Calculator.cpp"
-        chunks = chunker.chunk_file(str(file_path))
-
-        # C++ parser may not be available, so chunks might be empty
-        if len(chunks) > 0:
-            chunk_names = {chunk.name for chunk in chunks if chunk.name}
-            chunk_types = {chunk.chunk_type for chunk in chunks}
-
-            assert len(chunk_names) > 0 or len(chunk_types) > 0
-        # If no chunks, that's okay - parser not available
-
-    def test_chunk_csharp_file(self, chunker, test_data_dir):
-        """Test chunking C# file."""
-        file_path = test_data_dir / "Calculator.cs"
-        chunks = chunker.chunk_file(str(file_path))
-
-        # C# parser may not be available, so chunks might be empty
-        if len(chunks) > 0:
-            chunk_names = {chunk.name for chunk in chunks if chunk.name}
-            chunk_types = {chunk.chunk_type for chunk in chunks}
-
-            assert len(chunk_names) > 0 or len(chunk_types) > 0
-        # If no chunks, that's okay - parser not available
+            assert chunk_names or chunk_types
 
     def test_chunk_rust_file(self, chunker, test_data_dir):
         """Test chunking Rust file."""
-        file_path = test_data_dir / "calculator.rs"
+        file_path = test_data_dir / test_constants.PATH_CALCULATOR_RS
         chunks = chunker.chunk_file(str(file_path))
 
         assert len(chunks) > 0
@@ -187,5 +190,13 @@ class TestMultiLanguageChunker:
             for name in ["Calculator", "calculate_sum", "MathOperations", "Operation", "Point"]
         )
         assert any(
-            t in chunk_types for t in ["function", "struct", "trait", "enum", "impl", "macro"]
+            t in chunk_types
+            for t in [
+                constants.KEY_FUNCTION,
+                constants.SYNTAX_STRUCT,
+                constants.SYNTAX_TRAIT,
+                constants.SYNTAX_ENUM,
+                constants.SYNTAX_IMPL,
+                constants.SYNTAX_MACRO,
+            ]
         )

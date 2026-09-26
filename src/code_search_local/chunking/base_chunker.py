@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 from tree_sitter import Parser
 
+from code_search_local import constants
 from code_search_local.chunking.available_languages import get_availiable_language
 
 # map {language: language_obj}
@@ -29,24 +30,28 @@ class TreeSitterChunk:
     def to_dict(self) -> Dict:
         """Convert to dictionary format compatible with existing system."""
         return {
-            "content": self.content,
-            "start_line": self.start_line,
-            "end_line": self.end_line,
-            "type": self.node_type,
-            "language": self.language,
-            "metadata": self.metadata,
+            constants.KEY_CONTENT: self.content,
+            constants.KEY_START_LINE: self.start_line,
+            constants.KEY_END_LINE: self.end_line,
+            constants.KEY_TYPE: self.node_type,
+            constants.KEY_LANGUAGE: self.language,
+            constants.KEY_METADATA: self.metadata,
         }
 
 
 class LanguageChunker(ABC):
     """Abstract base class for language-specific chunkers."""
 
-    def __init__(self, language_name: str):
+    LANGUAGE_NAME = None
+    SPLITTABLE_NODE_TYPES = frozenset()
+
+    def __init__(self, language_name: str | None = None):
         """Initialize language chunker.
 
         Args:
             language_name: Programming language name
         """
+        language_name = self.LANGUAGE_NAME if language_name is None else language_name
         self.language_name = language_name
         if language_name not in AVAILABLE_LANGUAGES:
             raise ValueError(
@@ -57,14 +62,9 @@ class LanguageChunker(ABC):
         self.parser = Parser(self.language)
         self.splittable_node_types = self._get_splittable_node_types()
 
-    @abstractmethod
     def _get_splittable_node_types(self) -> Set[str]:
-        """Get node types that should be split into chunks.
-
-        Returns:
-            Set of node type names
-        """
-        pass
+        """Return a per-parser set from the language's immutable configuration."""
+        return set(self.SPLITTABLE_NODE_TYPES)
 
     @abstractmethod
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
@@ -98,14 +98,38 @@ class LanguageChunker(ABC):
         Default: classes (so methods are extracted). Languages with other
         type-bearing containers (e.g. Solidity contracts/libraries) override.
         """
-        return {"class_definition", "class_declaration"}
+        return {constants.KEY_CLASS_DEFINITION, constants.KEY_CLASS_DECLARATION}
 
     def _container_parent_info(self, node: Any, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Parent info dict propagated to children of a recursable container."""
         return {
-            "parent_name": metadata.get("name"),
-            "parent_type": metadata.get("node_type", node.type),
+            constants.KEY_PARENT_NAME: metadata.get(constants.KEY_NAME),
+            constants.KEY_PARENT_TYPE: metadata.get(constants.KEY_NODE_TYPE, node.type),
         }
+
+    def named_metadata(self, node, source, identifier_types=(constants.SYNTAX_IDENTIFIER,)):
+        """Collect the common node type and first declared child name."""
+        metadata = {constants.KEY_NODE_TYPE: node.type}
+        for child in node.children:
+            if child.type in identifier_types:
+                metadata[constants.KEY_NAME] = self.get_node_text(child, source)
+                break
+        return metadata
+
+    def declarator_metadata(self, node, source, identifier_types):
+        """Read the first function declarator without confusing its parameter names."""
+        metadata = {constants.KEY_NODE_TYPE: node.type}
+        for child in node.children:
+            if child.type == constants.SYNTAX_FUNCTION_DECLARATOR:
+                declaration = self.named_metadata(child, source, identifier_types)
+                if constants.KEY_NAME in declaration:
+                    metadata[constants.KEY_NAME] = declaration[constants.KEY_NAME]
+                break
+        return metadata
+
+    @staticmethod
+    def has_child_type(node, node_type):
+        return any(child.type == node_type for child in node.children)
 
     def get_node_text(self, node: Any, source: bytes) -> str:
         """Get text content of a node.
@@ -117,7 +141,7 @@ class LanguageChunker(ABC):
         Returns:
             Text content
         """
-        return source[node.start_byte : node.end_byte].decode("utf-8")
+        return source[node.start_byte : node.end_byte].decode(constants.TEXT_ENCODING)
 
     def get_line_numbers(self, node: Any) -> Tuple[int, int]:
         """Get start and end line numbers for a node.
@@ -140,7 +164,7 @@ class LanguageChunker(ABC):
         Returns:
             List of TreeSitterChunk objects
         """
-        source_bytes = bytes(source_code, "utf-8")
+        source_bytes = bytes(source_code, constants.TEXT_ENCODING)
         tree = self.parser.parse(source_bytes)
         chunks = []
 
@@ -187,9 +211,9 @@ class LanguageChunker(ABC):
                     content=source_code,
                     start_line=1,
                     end_line=len(source_code.split("\n")),
-                    node_type="module",
+                    node_type=constants.SYNTAX_MODULE,
                     language=self.language_name,
-                    metadata={"type": "module"},
+                    metadata={constants.KEY_TYPE: constants.SYNTAX_MODULE},
                 )
             )
 

@@ -1,50 +1,49 @@
 """Rust-specific tree-sitter based chunker."""
 
-from typing import Any, Dict, Set
+from typing import Any, Dict
 
+from code_search_local import constants
 from code_search_local.chunking.base_chunker import LanguageChunker
 
 
 class RustChunker(LanguageChunker):
     """Rust-specific chunker using tree-sitter."""
 
-    def __init__(self):
-        super().__init__("rust")
+    LANGUAGE_NAME = constants.LANGUAGE_RUST
 
-    def _get_splittable_node_types(self) -> Set[str]:
-        """Rust-specific splittable node types."""
-        return {
-            "function_item",
-            "impl_item",
-            "struct_item",
-            "enum_item",
-            "trait_item",
-            "mod_item",
-            "macro_definition",
+    SPLITTABLE_NODE_TYPES = frozenset(
+        {
+            constants.KEY_FUNCTION_ITEM,
+            constants.KEY_IMPL_ITEM,
+            constants.KEY_STRUCT_ITEM,
+            constants.KEY_ENUM_ITEM,
+            constants.KEY_TRAIT_ITEM,
+            constants.KEY_MOD_ITEM,
+            constants.KEY_MACRO_DEFINITION,
         }
+    )
 
     def extract_metadata(self, node: Any, source: bytes) -> Dict[str, Any]:
         """Extract Rust-specific metadata."""
-        metadata = {"node_type": node.type}
-
-        # Extract name (identifier or type_identifier)
-        for child in node.children:
-            if child.type in ["identifier", "type_identifier"]:
-                metadata["name"] = self.get_node_text(child, source)
-                break
+        metadata = self.named_metadata(
+            node, source, (constants.SYNTAX_IDENTIFIER, constants.SYNTAX_TYPE_IDENTIFIER)
+        )
 
         # Check for async functions
-        if node.type == "function_item":
+        if node.type == constants.KEY_FUNCTION_ITEM:
             for child in node.children:
-                if child.type == "async" or self.get_node_text(child, source) == "async":
-                    metadata["is_async"] = True
+                if (
+                    child.type == constants.SYNTAX_ASYNC
+                    or self.get_node_text(child, source) == constants.SYNTAX_ASYNC
+                ):
+                    metadata[constants.KEY_IS_ASYNC] = True
                     break
 
         # Extract impl type for impl blocks
-        if node.type == "impl_item":
+        if node.type == constants.KEY_IMPL_ITEM:
             for child in node.children:
-                if child.type in ["type_identifier", "generic_type"]:
-                    metadata["impl_type"] = self.get_node_text(child, source)
+                if child.type in [constants.SYNTAX_TYPE_IDENTIFIER, constants.SYNTAX_GENERIC_TYPE]:
+                    metadata[constants.KEY_IMPL_TYPE] = self.get_node_text(child, source)
                     break
 
         return metadata

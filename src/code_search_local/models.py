@@ -11,6 +11,8 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 
+from code_search_local import constants
+
 from .storage import atomic_json
 
 log = logging.getLogger(__name__)
@@ -18,40 +20,56 @@ log = logging.getLogger(__name__)
 
 def choose_device(torch, backend, gpu_index=0, fallback=False):
     """HIP exposes torch.cuda; the build tag distinguishes AMD from NVIDIA."""
-    actual = "rocm" if torch.version.hip else "cuda"
-    if backend == "cpu":
-        return {"backend": "cpu", "device": "cpu", "gpu": None, "fallback_reason": None}
-    if backend == "auto":
+    actual = constants.BACKEND_ROCM if torch.version.hip else constants.BACKEND_CUDA
+    if backend == constants.BACKEND_CPU:
+        return {
+            constants.KEY_BACKEND: constants.BACKEND_CPU,
+            constants.KEY_DEVICE: constants.BACKEND_CPU,
+            constants.KEY_GPU: None,
+            constants.KEY_FALLBACK_REASON: None,
+        }
+    if backend == constants.BACKEND_AUTO:
         backend = (
             actual
             if torch.cuda.is_available()
             else (
-                "mps"
-                if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-                else "cpu"
+                constants.BACKEND_MPS
+                if hasattr(torch.backends, constants.BACKEND_MPS)
+                and torch.backends.mps.is_available()
+                else constants.BACKEND_CPU
             )
         )
         return choose_device(torch, backend, gpu_index, fallback)
     error = None
-    if backend == "mps":
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return {"backend": "mps", "device": "mps", "gpu": "Apple MPS", "fallback_reason": None}
+    if backend == constants.BACKEND_MPS:
+        if hasattr(torch.backends, constants.BACKEND_MPS) and torch.backends.mps.is_available():
+            return {
+                constants.KEY_BACKEND: constants.BACKEND_MPS,
+                constants.KEY_DEVICE: constants.BACKEND_MPS,
+                constants.KEY_GPU: "Apple MPS",
+                constants.KEY_FALLBACK_REASON: None,
+            }
         error = "MPS is unavailable"
     elif actual != backend:
-        error = f"Requested {backend}, but installed PyTorch is a {actual if torch.version.cuda or torch.version.hip else 'CPU'} build"
+        error = f"Requested {backend}, but installed PyTorch is a {actual if torch.version.cuda or torch.version.hip else constants.DEVICE_LABEL_CPU} build"
     elif not torch.cuda.is_available() or gpu_index >= torch.cuda.device_count():
         error = f"{backend} GPU {gpu_index} is unavailable"
     else:
         return {
-            "backend": backend,
-            "device": f"cuda:{gpu_index}",
-            "gpu": torch.cuda.get_device_name(gpu_index),
-            "gpu_index": gpu_index,
-            "fallback_reason": None,
+            constants.KEY_BACKEND: backend,
+            constants.KEY_DEVICE: constants.TORCH_GPU_DEVICE_TEMPLATE.format(index=gpu_index),
+            constants.KEY_GPU: torch.cuda.get_device_name(gpu_index),
+            constants.KEY_GPU_INDEX: gpu_index,
+            constants.KEY_FALLBACK_REASON: None,
         }
     if not fallback:
         raise RuntimeError(error)
-    return {"backend": "cpu", "device": "cpu", "gpu": None, "fallback_reason": error}
+    return {
+        constants.KEY_BACKEND: constants.BACKEND_CPU,
+        constants.KEY_DEVICE: constants.BACKEND_CPU,
+        constants.KEY_GPU: None,
+        constants.KEY_FALLBACK_REASON: error,
+    }
 
 
 class SentenceModel:
@@ -68,18 +86,23 @@ class SentenceModel:
         self.info = choose_device(
             torch, settings.backend, settings.gpu_index, settings.allow_fallback
         )
-        if settings.backend == "auto" and self.info["backend"] == "cpu":
-            self.info["fallback_reason"] = "No usable accelerator in the selected PyTorch runtime"
-        if self.info["fallback_reason"]:
+        if (
+            settings.backend == constants.BACKEND_AUTO
+            and self.info[constants.KEY_BACKEND] == constants.BACKEND_CPU
+        ):
+            self.info[constants.KEY_FALLBACK_REASON] = (
+                "No usable accelerator in the selected PyTorch runtime"
+            )
+        if self.info[constants.KEY_FALLBACK_REASON]:
             report(fallback_events=1)
-        model_cache = settings.root / "models"
+        model_cache = settings.root / constants.MODEL_CACHE_DIRECTORY
         key = hashlib.sha256(f"{settings.model}@{settings.revision}".encode()).hexdigest()
-        pointer = model_cache / f"{key}.json"
+        pointer = model_cache / constants.MODEL_POINTER_FILENAME_TEMPLATE.format(key=key)
         snapshot = None
         if pointer.exists():
             saved = json.loads(pointer.read_text())
-            if Path(saved["snapshot"]).is_dir():
-                snapshot = saved["snapshot"]
+            if Path(saved[constants.KEY_SNAPSHOT]).is_dir():
+                snapshot = saved[constants.KEY_SNAPSHOT]
         if snapshot is None:
             # Try the shared Hub cache first. Offline mode never performs an HTTP request.
             try:
@@ -106,7 +129,7 @@ class SentenceModel:
                     downloaded_files=len(new),
                     downloaded_bytes=sum(after[path] for path in new),
                 )
-            atomic_json(pointer, {"snapshot": str(snapshot)})
+            atomic_json(pointer, {constants.KEY_SNAPSHOT: str(snapshot)})
         self.info.update(
             model=settings.model,
             requested_revision=settings.revision,
@@ -115,34 +138,56 @@ class SentenceModel:
         )
         try:
             self.model = SentenceTransformer(
-                snapshot, device=self.info["device"], local_files_only=True, trust_remote_code=False
+                snapshot,
+                device=self.info[constants.KEY_DEVICE],
+                local_files_only=True,
+                trust_remote_code=False,
             )
             # Force kernel initialization now: setup must not silently enable a broken GPU runtime.
             self.model.encode(["code search backend validation"], show_progress_bar=False)
         except Exception as error:
-            if self.info["backend"] == "cpu" or not settings.allow_fallback:
+            if (
+                self.info[constants.KEY_BACKEND] == constants.BACKEND_CPU
+                or not settings.allow_fallback
+            ):
                 raise
-            self.info.update(backend="cpu", device="cpu", gpu=None, fallback_reason=str(error))
+            self.info.update(
+                backend=constants.BACKEND_CPU,
+                device=constants.BACKEND_CPU,
+                gpu=None,
+                fallback_reason=str(error),
+            )
             report(fallback_events=1)
             self.model = SentenceTransformer(
-                snapshot, device="cpu", local_files_only=True, trust_remote_code=False
+                snapshot,
+                device=constants.BACKEND_CPU,
+                local_files_only=True,
+                trust_remote_code=False,
             )
             self.model.encode(["code search backend validation"], show_progress_bar=False)
-        self.info["dimension"] = self.model.get_embedding_dimension()
-        self.info["encoding"] = {"normalize": True, "max_chars": 6000, "format_version": 1}
+        self.info[constants.KEY_DIMENSION] = self.model.get_embedding_dimension()
+        self.info[constants.KEY_ENCODING] = {
+            constants.KEY_NORMALIZE: True,
+            constants.KEY_MAX_CHARS: constants.EMBEDDING_MAX_CHARACTERS,
+            constants.KEY_FORMAT_VERSION: constants.EMBEDDING_FORMAT_VERSION,
+        }
         report(model_loads=1)
 
     @staticmethod
     def _blobs(root):
         return {
             str(path): path.stat().st_size
-            for path in root.glob("models--*/blobs/*")
-            if path.is_file() and not path.name.endswith(".incomplete")
+            for path in root.glob(constants.PATH_MODELS_BLOBS)
+            if path.is_file() and not path.name.endswith(constants.PATH_INCOMPLETE)
         }
 
     def encode(self, texts, purpose):
-        prompts = getattr(self.model, "prompts", {})
-        preferred = "Retrieval-document" if purpose == "document" else "InstructionRetrieval"
+        prompts = getattr(self.model, constants.KEY_PROMPTS, {})
+        preferred = (
+            constants.DOCUMENT_PROMPT_NAME
+            if purpose == constants.KEY_DOCUMENT
+            else constants.QUERY_PROMPT_NAME
+        )
         prompt = preferred if preferred in prompts else (purpose if purpose in prompts else None)
         kwargs = dict(
             prompt_name=prompt,
@@ -153,23 +198,31 @@ class SentenceModel:
         try:
             return self.model.encode(texts, **kwargs)
         except RuntimeError as error:
-            if self.info["backend"] == "cpu" or not self.settings.allow_fallback:
+            if (
+                self.info[constants.KEY_BACKEND] == constants.BACKEND_CPU
+                or not self.settings.allow_fallback
+            ):
                 raise
-            self.model.to("cpu")
-            self.info.update(backend="cpu", device="cpu", gpu=None, fallback_reason=str(error))
+            self.model.to(constants.BACKEND_CPU)
+            self.info.update(
+                backend=constants.BACKEND_CPU,
+                device=constants.BACKEND_CPU,
+                gpu=None,
+                fallback_reason=str(error),
+            )
             self.report(fallback_events=1)
             if self.torch.cuda.is_available():
                 self.torch.cuda.empty_cache()
             return self.model.encode(texts, **kwargs)
 
     def memory(self):
-        if self.info["backend"] in ("cuda", "rocm"):
-            return self.torch.cuda.memory_allocated(self.info["device"])
+        if self.info[constants.KEY_BACKEND] in (constants.BACKEND_CUDA, constants.BACKEND_ROCM):
+            return self.torch.cuda.memory_allocated(self.info[constants.KEY_DEVICE])
         return 0
 
     def close(self):
         del self.model
-        if self.info["backend"] in ("cuda", "rocm"):
+        if self.info[constants.KEY_BACKEND] in (constants.BACKEND_CUDA, constants.BACKEND_ROCM):
             self.torch.cuda.empty_cache()
 
 
@@ -190,18 +243,23 @@ class ModelWorker:
         self.pending = 0
         self.model = None
         self.ready = Future()
-        self.thread = threading.Thread(target=self._run, name="code-search-model", daemon=True)
+        self.thread = threading.Thread(
+            target=self._run, name=constants.MODEL_THREAD_NAME, daemon=True
+        )
         self.thread.start()
         self.ready.result()
 
-    def submit(self, project, texts=None, purpose="document"):
-        if purpose not in ("document", "query"):
+    def submit(self, project, texts=None, purpose=constants.KEY_DOCUMENT):
+        if purpose not in (constants.KEY_DOCUMENT, constants.KEY_QUERY):
             raise ValueError("Invalid embedding purpose")
         future = Future()
         with self.condition:
             if self.stopping:
                 raise RuntimeError("Model worker is stopping")
-            if self.pending >= self.settings.max_pending_jobs * 2:
+            if (
+                self.pending
+                >= self.settings.max_pending_jobs * constants.MODEL_QUEUE_CAPACITY_MULTIPLIER
+            ):
                 raise RuntimeError("Model queue is full; retry later")
             self.queues.setdefault(project, deque()).append(
                 Request(future, project, texts, purpose)
@@ -213,7 +271,7 @@ class ModelWorker:
     def info(self, project):
         return self.submit(project).result()
 
-    def encode(self, project, texts, purpose="document"):
+    def encode(self, project, texts, purpose=constants.KEY_DOCUMENT):
         import numpy as np
 
         batches = []
@@ -221,23 +279,23 @@ class ModelWorker:
         for start in range(0, len(texts), size):
             batches.append(self.submit(project, texts[start : start + size], purpose).result())
         if not batches:
-            return np.empty((0, self.info(project)["dimension"]), dtype="float32")
+            return np.empty(
+                (0, self.info(project)[constants.KEY_DIMENSION]), dtype=constants.VECTOR_DTYPE
+            )
         return np.concatenate(batches)
 
     def _report(self, **counters):
-        with self.state.edit("model.changed") as value:
-            shared = value["shared"]
+        with self.state.edit(constants.EVENT_MODEL_CHANGED) as value:
+            shared = value[constants.KEY_SHARED]
             for key, count in counters.items():
                 shared[key] = shared.get(key, 0) + count
 
     def _run(self):
         db = None
         try:
-            db = sqlite3.connect(self.settings.root / "embedding-cache.sqlite3")
-            db.execute("PRAGMA journal_mode=WAL")
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS embeddings (key TEXT PRIMARY KEY, vector BLOB NOT NULL)"
-            )
+            db = sqlite3.connect(self.settings.root / constants.PATH_EMBEDDING_CACHE_SQLITE3)
+            db.execute(constants.SQL_ENABLE_WAL)
+            db.execute(constants.SQL_CREATE_EMBEDDINGS)
         except Exception as error:
             if db is not None:
                 db.close()
@@ -260,9 +318,9 @@ class ModelWorker:
                 try:
                     if self.model is None:
                         self.model = self.factory(self.settings, self._report)
-                        with self.state.edit("model.loaded") as value:
-                            value["shared"]["model"] = dict(self.model.info)
-                            value["shared"]["model_resident"] = True
+                        with self.state.edit(constants.EVENT_MODEL_LOADED) as value:
+                            value[constants.KEY_SHARED][constants.KEY_MODEL] = dict(self.model.info)
+                            value[constants.KEY_SHARED][constants.KEY_MODEL_RESIDENT] = True
                     result = (
                         dict(self.model.info)
                         if request.texts is None
@@ -282,17 +340,29 @@ class ModelWorker:
         import numpy as np
 
         # Hardware does not define embedding identity, but dtype/encoding settings do.
-        identity = {k: self.model.info[k] for k in ("model", "revision", "encoding", "dimension")}
+        identity = {
+            k: self.model.info[k]
+            for k in (
+                constants.KEY_MODEL,
+                constants.KEY_REVISION,
+                constants.KEY_ENCODING,
+                constants.KEY_DIMENSION,
+            )
+        }
         fingerprint = json.dumps(identity, sort_keys=True)
         keys = [
-            hashlib.sha256(f"{fingerprint}:{request.purpose}:{text}".encode()).hexdigest()
+            hashlib.sha256(
+                constants.EMBEDDING_CACHE_KEY_TEMPLATE.format(
+                    fingerprint=fingerprint, purpose=request.purpose, text=text
+                ).encode()
+            ).hexdigest()
             for text in request.texts
         ]
         vectors = {}
         hits = 0
         missing = {}
         for key, text in zip(keys, request.texts):
-            row = db.execute("SELECT vector FROM embeddings WHERE key=?", (key,)).fetchone()
+            row = db.execute(constants.SQL_READ_EMBEDDING, (key,)).fetchone()
             if row:
                 vectors[key] = np.frombuffer(row[0], dtype=np.float32).copy()
                 hits += 1
@@ -306,30 +376,30 @@ class ModelWorker:
                 self.model.encode(list(missing.values()), request.purpose), dtype=np.float32
             )
             if (
-                encoded.shape != (len(missing), self.model.info["dimension"])
+                encoded.shape != (len(missing), self.model.info[constants.KEY_DIMENSION])
                 or not np.isfinite(encoded).all()
             ):
                 raise ValueError("Model produced invalid embeddings")
             for key, vector in zip(missing, encoded):
                 vectors[key] = vector
-                db.execute(
-                    "INSERT OR REPLACE INTO embeddings VALUES (?,?)", (key, vector.tobytes())
-                )
+                db.execute(constants.SQL_SAVE_EMBEDDING, (key, vector.tobytes()))
             db.commit()
             self._report(
                 inference_batches=1,
                 inference_seconds=time.monotonic() - start,
                 embedded_texts=len(missing),
             )
-        with self.state.edit("cache.changed", request.project) as value:
-            project = value["projects"].get(request.project)
+        with self.state.edit(constants.EVENT_CACHE_CHANGED, request.project) as value:
+            project = value[constants.KEY_PROJECTS].get(request.project)
             if project is not None:
-                project["cache_hits"] = project.get("cache_hits", 0) + hits
-                project["cache_misses"] = project.get("cache_misses", 0) + len(missing)
-                project["active_model"] = dict(self.model.info)
-            value["shared"]["model"] = dict(self.model.info)
-            value["shared"]["gpu_memory_bytes"] = self.model.memory()
-            value["shared"]["max_concurrent_inference"] = 1
+                project[constants.KEY_CACHE_HITS] = project.get(constants.KEY_CACHE_HITS, 0) + hits
+                project[constants.KEY_CACHE_MISSES] = project.get(
+                    constants.KEY_CACHE_MISSES, 0
+                ) + len(missing)
+                project[constants.KEY_ACTIVE_MODEL] = dict(self.model.info)
+            value[constants.KEY_SHARED][constants.KEY_MODEL] = dict(self.model.info)
+            value[constants.KEY_SHARED][constants.KEY_GPU_MEMORY_BYTES] = self.model.memory()
+            value[constants.KEY_SHARED][constants.KEY_MAX_CONCURRENT_INFERENCE] = 1
         return np.stack([vectors[key] for key in keys])
 
     def close(self):
