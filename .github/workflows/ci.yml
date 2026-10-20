@@ -23,12 +23,22 @@ jobs:
         run: |
           .venvs/cpu/bin/hatch run lint
           .venvs/cpu/bin/hatch run coverage --cov-report=xml
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          cache: true
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.x
+      - name: Build the web dashboard bundled into the distributions
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
       - name: Build and test all installers
         env:
           CODE_SEARCH_PACKAGING: '1'
         run: |
           .venvs/cpu/bin/hatch build
-          .venvs/cpu/bin/hatch run test tests/integration/test_packaging.py
+          .venvs/cpu/bin/hatch run test packages/code-search-local/tests/integration/test_packaging.py
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: distributions
@@ -40,3 +50,35 @@ jobs:
           path: |
             coverage.json
             coverage.xml
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          cache: true
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.x
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Workspace gate
+        run: pnpm check
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+      # The end-to-end specs start the Python service from the CPU environment (fake model).
+      - name: Bootstrap the CPU service environment
+        run: |
+          python -m venv .venvs/cpu
+          .venvs/cpu/bin/python -m pip install .
+          UV_PROJECT_ENVIRONMENT=.venvs/cpu .venvs/cpu/bin/uv sync --locked --extra server --extra cpu
+      - name: Install the Playwright browser
+        run: pnpm --filter @code-search-local/code-search-local-webapp exec playwright install --with-deps chromium
+      - name: Dashboard end-to-end tests
+        run: pnpm test:e2e
+      - uses: actions/upload-artifact@v7.0.1
+        if: failure()
+        with:
+          name: playwright-results
+          path: packages/code-search-local-webapp/lib/playwright/test-results

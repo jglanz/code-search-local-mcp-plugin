@@ -233,8 +233,11 @@ __marimo__/
 /.test-artifacts/
 
 # Legacy generated resources; Hatchling maps canonical inputs directly into wheels.
-/src/code_search_local/runtime/
-/src/code_search_local/assets/
+/packages/code-search-local/src/code_search_local/runtime/
+/packages/code-search-local/src/code_search_local/assets/
+# API models and JSON document the build hook generates from the OpenAPI document.
+/packages/code-search-local/src/code_search_local/api/models.py
+/packages/code-search-local/src/code_search_local/api/openapi.json
 /coverage.json
 /coverage/
 /reports/
@@ -248,3 +251,18 @@ __marimo__/
 
 # Private backups written when registering agent harnesses.
 *.code-search-local.bak
+
+# pnpm workspace: dependencies, TypeScript build info, compiler and bundler output.
+node_modules/
+*.tsbuildinfo
+packages/code-search-local-webapp/lib/
+packages/code-search-local-webapp/dist/
+packages/code-search-local-api/lib/
+# Schemas and types a package build generates from its OpenAPI document (`pnpm run generate`).
+packages/*/src/generated/
+
+# Playwright outputs.
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

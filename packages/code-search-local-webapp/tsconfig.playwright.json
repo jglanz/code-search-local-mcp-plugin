@@ -1,0 +1,11 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.esm.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "lib/test",
+    "lib": ["ESNext", "DOM"],
+    "types": ["node"]
+  },
+  "references": [{ "path": "../code-search-local-api/tsconfig.esm.json" }],
+  "include": ["etc/playwright", "tests/e2e"]
+}

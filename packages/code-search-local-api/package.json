@@ -1,0 +1,43 @@
+{
+  "name": "@code-search-local/code-search-local-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "lib/esm/index.d.ts",
+  "module": "lib/esm/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/esm/index.d.ts",
+      "import": "./lib/esm/index.js"
+    },
+    "./testing": {
+      "types": "./lib/esm/testing/index.d.ts",
+      "import": "./lib/esm/testing/index.js"
+    },
+    "./openapi.yaml": "./openapi.yaml"
+  },
+  "files": [
+    "lib",
+    "openapi.yaml",
+    "README.md"
+  ],
+  "scripts": {
+    "generate": "openapi-ts --file etc/openapi-ts/openapi-ts.config.mjs",
+    "prepare": "pnpm run generate",
+    "compile": "pnpm run generate && tsc -b tsconfig.json",
+    "build": "pnpm run compile",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "clean": "rm -rf lib src/generated"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
+    "@jest/globals": "^30.5.2",
+    "@types/node": "^26.6.5",
+    "ts-jest": "^29.4.14",
+    "typescript": "~6.0.3",
+    "yaml": "^2.9.1"
+  }
+}

@@ -1,0 +1,1467 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Code Search Local service API
+  version: 1.0.0
+  summary:
+    Loopback administration, search and analytics API of the shared Code Search
+    Local service.
+  description: >-
+    Single source of truth for the HTTP API served by the user-scoped Code
+    Search Local daemon. Python pydantic models and TypeScript zod schemas are
+    generated from this document at build time. Every `/api/v1` route requires
+    `Authorization: Bearer <token>` (the token stored in the service storage
+    `auth.json`). Every request, including web UI requests, must carry a
+    loopback `Host` and, when present, a loopback `http://` `Origin`; otherwise
+    the service answers 403. The MCP endpoint `/mcp` (streamable HTTP, same
+    authentication) is not described here.
+servers:
+  - url: http://127.0.0.1:{port}
+    description: The service binds only to loopback addresses.
+    variables:
+      port:
+        default: "8000"
+        description: Service port from the `port` setting.
+security:
+  - bearerAuth: []
+tags:
+  - name: service
+    description: Daemon health, shared model and statistics.
+  - name: indexing
+    description: Durable per-project indexing jobs.
+  - name: search
+    description: Semantic search over a project's committed index generation.
+  - name: analytics
+    description: Per-path search analytics.
+  - name: webui
+    description: Static web dashboard; exempt from bearer authentication.
+paths:
+  /api/v1/health:
+    get:
+      tags: [service]
+      operationId: getHealth
+      summary: Report service liveness.
+      description:
+        Returns a fixed status and the identifier of the running daemon.
+      responses:
+        "200":
+          description: The daemon is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/model:
+    post:
+      tags: [service]
+      operationId: warmupModel
+      summary: Load the shared embedding model.
+      description: >-
+        Loads the shared model on the model thread (downloading it first unless
+        offline mode is set) and returns its information. Takes no request body
+        and may block until loading completes.
+      responses:
+        "200":
+          description: The model is resident.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelInfo"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/stats:
+    get:
+      tags: [service]
+      operationId: getStats
+      summary: Read the statistics snapshot.
+      description: >-
+        Returns the full statistics snapshot, or a snapshot filtered to one
+        project and its jobs. Shared model statistics and totals are always
+        included.
+      parameters:
+        - $ref: "#/components/parameters/ProjectFilter"
+      responses:
+        "200":
+          description: Current statistics snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsSnapshot"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/index:
+    post:
+      tags: [indexing]
+      operationId: indexDirectory
+      summary: Queue an indexing job for a project.
+      description: >-
+        Registers the project if needed, enables change watching, queues an
+        indexing job and returns it. When `wait` is true the response is sent
+        after the job reaches a terminal status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexRequest"
+      responses:
+        "200":
+          description: The queued job, or the terminal job when `wait` is true.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/search:
+    post:
+      tags: [search]
+      operationId: searchCode
+      summary: Search one project's committed index.
+      description: >-
+        Embeds the query with the shared model and returns the highest-scoring
+        chunks of the project's committed generation. Every call updates the
+        project's search counters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Ranked search results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/jobs/{job_id}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+      - $ref: "#/components/parameters/Project"
+    get:
+      tags: [indexing]
+      operationId: getJob
+      summary: Read one indexing job.
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [indexing]
+      operationId: cancelJob
+      summary: Request cancellation of one indexing job.
+      description: >-
+        Cancellation is cooperative. The returned job may still be queued or
+        running; poll `getJob` until it is terminal. Terminal jobs are returned
+        unchanged.
+      responses:
+        "200":
+          description: The job after the cancellation request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/paths:
+    get:
+      tags: [analytics]
+      operationId: getPaths
+      summary: Read per-path search analytics of one project.
+      description: >-
+        Lists every file of the committed generation, sorted by path, with its
+        search analytics. Files never returned by a search carry zero counters
+        and null score/time. A project without a committed generation returns a
+        null `generation` and no paths.
+      parameters:
+        - $ref: "#/components/parameters/Project"
+      responses:
+        "200":
+          description: Per-path analytics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PathsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/openapi.json:
+    get:
+      tags: [service]
+      operationId: getOpenApiDocument
+      summary: Read this API description.
+      responses:
+        "200":
+          description: This OpenAPI document as JSON.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenApiDocument"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /:
+    get:
+      tags: [webui]
+      operationId: redirectRootToWebUi
+      summary: Redirect to the web dashboard.
+      security: []
+      responses:
+        "307":
+          $ref: "#/components/responses/WebUiRedirect"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /ui:
+    get:
+      tags: [webui]
+      operationId: redirectWebUiPrefix
+      summary: Redirect to the web dashboard with a trailing slash.
+      security: []
+      responses:
+        "307":
+          $ref: "#/components/responses/WebUiRedirect"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /ui/:
+    get:
+      tags: [webui]
+      operationId: getWebUiIndex
+      summary: Serve the web dashboard entry page.
+      security: []
+      responses:
+        "200":
+          description: The dashboard `index.html`.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/EntryPageCacheControl"
+            Content-Security-Policy:
+              $ref: "#/components/headers/ContentSecurityPolicy"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/ContentTypeOptions"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicy"
+          content:
+            text/html:
+              schema:
+                type: string
+                description: HTML document.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/WebUiUnavailable"
+  /ui/{asset_path}:
+    get:
+      tags: [webui]
+      operationId: getWebUiAsset
+      summary: Serve a web dashboard asset or client-side route.
+      description: >-
+        Serves a file from the dashboard assets directory. A path without a file
+        extension that names no file is a client-side route and falls back to
+        `index.html`. A missing file with an extension, and a path resolving
+        outside the assets directory, are rejected with 404.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WebUiAssetPath"
+      responses:
+        "200":
+          description:
+            The requested asset, or `index.html` for a client-side route.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/EntryPageCacheControl"
+            Content-Security-Policy:
+              $ref: "#/components/headers/ContentSecurityPolicy"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/ContentTypeOptions"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicy"
+          content:
+            text/html:
+              schema:
+                type: string
+                description: HTML document for a client-side route.
+            "*/*":
+              schema:
+                description:
+                  Static asset bytes with a type derived from the file name.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description:
+            A missing file with an extension, or a path outside the assets
+            directory.
+          headers:
+            Content-Security-Policy:
+              $ref: "#/components/headers/ContentSecurityPolicy"
+            X-Content-Type-Options:
+              $ref: "#/components/headers/ContentTypeOptions"
+            Referrer-Policy:
+              $ref: "#/components/headers/ReferrerPolicy"
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Human-readable explanation.
+        "503":
+          $ref: "#/components/responses/WebUiUnavailable"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Service token from the service storage `auth.json`.
+  parameters:
+    ProjectFilter:
+      name: project
+      in: query
+      required: false
+      description: Absolute registered project root; omit for all projects.
+      schema:
+        type: string
+    Project:
+      name: project
+      in: query
+      required: true
+      description: Absolute registered project root.
+      schema:
+        type: string
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      description: Job identifier returned when the job was queued.
+      schema:
+        type: string
+    WebUiAssetPath:
+      name: asset_path
+      in: path
+      required: true
+      description: Path below `/ui/`; may contain `/` separators.
+      schema:
+        type: string
+  headers:
+    ContentSecurityPolicy:
+      description: >-
+        Always `default-src 'self'; style-src 'self' 'unsafe-inline'; img-src
+        'self' data:; connect-src 'self'; frame-ancestors 'none'`.
+      schema:
+        type: string
+    ContentTypeOptions:
+      description: Always `nosniff`.
+      schema:
+        type: string
+    ReferrerPolicy:
+      description: Always `no-referrer`.
+      schema:
+        type: string
+    EntryPageCacheControl:
+      description: >-
+        `no-cache` on every `index.html` response, so browsers revalidate the
+        entry page; static assets carry no `Cache-Control` header.
+      schema:
+        type: string
+    Location:
+      description: Redirect target, `/ui/`.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description:
+        Invalid input or a rejected operation; `error` carries the reason.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or wrong bearer token; `error` is `Unauthorized`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description:
+        Non-loopback `Host` or foreign `Origin`; `error` is `Invalid Host or
+        Origin`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    WebUiRedirect:
+      description: Temporary redirect to `/ui/`.
+      headers:
+        Location:
+          $ref: "#/components/headers/Location"
+    WebUiUnavailable:
+      description:
+        The dashboard assets are not built; the message says to run `pnpm
+        build`.
+      content:
+        text/plain:
+          schema:
+            type: string
+            description: Human-readable explanation.
+  schemas:
+    ErrorResponse:
+      type: object
+      description: Error body of every failed API request.
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable failure reason.
+    HealthResponse:
+      type: object
+      description: Liveness response.
+      additionalProperties: false
+      required: [status, daemon_id]
+      properties:
+        status:
+          const: ok
+          description: Always `ok` while the daemon serves requests.
+        daemon_id:
+          type: string
+          description:
+            Random identifier of the running daemon process (32 hex characters).
+    OpenApiDocument:
+      type: object
+      description: An OpenAPI 3.1 document.
+      additionalProperties: true
+    Backend:
+      type: string
+      description: >-
+        Model execution backend. `auto` is only a requested value; a resolved
+        backend is one of the others.
+      enum: [auto, cpu, cuda, rocm, mps]
+    ModelEncoding:
+      type: object
+      description: >-
+        Embedding encoding parameters; part of the index fingerprint. Persisted
+        with indexes, so unknown keys are retained.
+      additionalProperties: true
+      required: [normalize, format_version]
+      properties:
+        normalize:
+          type: boolean
+          description: Embeddings are L2-normalised.
+        max_chars:
+          type: integer
+          minimum: 1
+          description: Maximum characters of chunk text embedded.
+        format_version:
+          type: integer
+          minimum: 1
+          description: Embedding text format version.
+    ModelInfo:
+      type: object
+      description: >-
+        Information about the shared embedding model. Backends and test doubles
+        may add keys, so unknown keys are retained.
+      additionalProperties: true
+      required:
+        [
+          model,
+          revision,
+          dimension,
+          encoding,
+          backend,
+          device,
+          gpu,
+          fallback_reason
+        ]
+      properties:
+        model:
+          type: string
+          description: Hugging Face model repository ID.
+        revision:
+          type: string
+          description: Resolved model snapshot revision.
+        requested_revision:
+          type: string
+          description: Revision requested by configuration.
+        requested_backend:
+          $ref: "#/components/schemas/Backend"
+          description: Backend requested by configuration.
+        backend:
+          $ref: "#/components/schemas/Backend"
+          description: Backend actually used for inference.
+        device:
+          type: string
+          description: Torch device, e.g. `cpu`, `mps` or `cuda:0`.
+        gpu:
+          type: [string, "null"]
+          description: Accelerator name, or null on CPU.
+        gpu_index:
+          type: integer
+          minimum: 0
+          description: Accelerator index; present only on CUDA or ROCm devices.
+        fallback_reason:
+          type: [string, "null"]
+          description: Why inference fell back to CPU, or null.
+        dimension:
+          type: integer
+          minimum: 1
+          description: Embedding vector dimension.
+        encoding:
+          $ref: "#/components/schemas/ModelEncoding"
+          description: Embedding encoding parameters.
+    SharedStats:
+      type: object
+      description: >-
+        Shared model and service counters. Counters appear after their first
+        increment; reported counters are open-ended, so unknown keys are
+        retained.
+      additionalProperties: true
+      required: [model_resident]
+      properties:
+        model_resident:
+          type: boolean
+          description: The model is loaded in this daemon.
+        model:
+          $ref: "#/components/schemas/ModelInfo"
+          description: Information about the most recently loaded or used model.
+        gpu_memory_bytes:
+          type: integer
+          minimum: 0
+          description:
+            Accelerator memory allocated by the model after the last encode; 0
+            on CPU.
+        max_concurrent_inference:
+          type: integer
+          minimum: 1
+          description: Maximum concurrent inference requests (one model thread).
+        model_acquisitions:
+          type: integer
+          minimum: 0
+          description: Model loads that needed a download attempt.
+        model_downloads:
+          type: integer
+          minimum: 0
+          description: Completed model downloads.
+        downloaded_files:
+          type: integer
+          minimum: 0
+          description: Model files added by downloads.
+        downloaded_bytes:
+          type: integer
+          minimum: 0
+          description: Bytes of model files added by downloads.
+        model_loads:
+          type: integer
+          minimum: 0
+          description: Model instantiations.
+        fallback_events:
+          type: integer
+          minimum: 0
+          description: Accelerator-to-CPU fallbacks.
+        inference_batches:
+          type: integer
+          minimum: 0
+          description:
+            Encode batches that ran inference (embedding cache misses).
+        inference_seconds:
+          type: number
+          minimum: 0
+          description: Cumulative inference time in seconds.
+        embedded_texts:
+          type: integer
+          minimum: 0
+          description: Texts embedded by inference.
+        search_hit_min_score:
+          type: number
+          minimum: -1
+          maximum: 1
+          description:
+            Minimum top score for a search to count as a relevance hit.
+    IndexChanges:
+      type: object
+      description:
+        File changes detected by one indexing job relative to the previous
+        generation.
+      additionalProperties: false
+      required: [added, modified, deleted]
+      properties:
+        added:
+          type: integer
+          minimum: 0
+          description: Files new to the index scope.
+        modified:
+          type: integer
+          minimum: 0
+          description: Files whose content hash changed.
+        deleted:
+          type: integer
+          minimum: 0
+          description: Files no longer in the index scope.
+    IndexResult:
+      type: object
+      description: >-
+        Statistics of the generation committed by a successful indexing job.
+        Persisted with the job, so unknown keys are retained.
+      additionalProperties: true
+      required:
+        - files
+        - files_scanned
+        - files_supported
+        - files_skipped
+        - chunks
+        - source_bytes
+        - indexed_at
+        - changes
+        - reused_chunks
+        - model
+        - merkle_root
+        - needs_rebuild
+        - generation
+        - index_bytes
+      properties:
+        files:
+          type: integer
+          minimum: 0
+          description: Files with at least one indexed chunk.
+        files_scanned:
+          type: integer
+          minimum: 0
+          description:
+            Files found by the scan after ignore rules and size limit.
+        files_supported:
+          type: integer
+          minimum: 0
+          description:
+            Scanned files with a supported extension that match the file
+            patterns.
+        files_skipped:
+          type: integer
+          minimum: 0
+          description: Scanned files without indexed chunks.
+        chunks:
+          type: integer
+          minimum: 0
+          description: Chunks in the generation.
+        source_bytes:
+          type: integer
+          minimum: 0
+          description: Total bytes of supported files.
+        indexed_at:
+          type: string
+          format: date-time
+          description: Time the generation was built.
+        changes:
+          $ref: "#/components/schemas/IndexChanges"
+          description: Changes detected by this job.
+        reused_chunks:
+          type: integer
+          minimum: 0
+          description:
+            Chunks carried over unchanged from the previous generation.
+        model:
+          $ref: "#/components/schemas/ModelInfo"
+          description: Model that embedded the generation.
+        merkle_root:
+          type: [string, "null"]
+          description: Merkle root hash of the scanned tree.
+        needs_rebuild:
+          type: boolean
+          description: Always false after a successful build.
+        generation:
+          type: string
+          description:
+            Committed generation name (`gen-` followed by 32 hex characters).
+        index_bytes:
+          type: integer
+          minimum: 0
+          description:
+            Bytes of the generation's vector index and chunk database.
+    PathStat:
+      type: object
+      description: Search analytics of one project-relative file path.
+      additionalProperties: false
+      required:
+        - path
+        - appearances
+        - hits
+        - misses
+        - hit_ratio
+        - top_ranked
+        - chunk_appearances
+        - best_score
+        - last_seen_at
+      properties:
+        path:
+          type: string
+          description: Project-relative file path.
+        chunks:
+          type: integer
+          minimum: 0
+          description: >-
+            Chunks of this file in the committed generation; always present in
+            `getPaths` rows.
+        appearances:
+          type: integer
+          minimum: 0
+          description:
+            Successful searches that returned at least one chunk of this file.
+        hits:
+          type: integer
+          minimum: 0
+          description:
+            Appearances where a chunk of this file scored at or above the
+            threshold.
+        misses:
+          type: integer
+          minimum: 0
+          description: Appearances minus hits.
+        hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Hits divided by appearances; 0.0 without appearances.
+        top_ranked:
+          type: integer
+          minimum: 0
+          description: Searches in which this file held rank 1.
+        chunk_appearances:
+          type: integer
+          minimum: 0
+          description: Total chunks of this file returned across searches.
+        best_score:
+          type: [number, "null"]
+          description:
+            Highest score of a chunk of this file; null if never returned.
+        last_seen_at:
+          type: [string, "null"]
+          format: date-time
+          description:
+            Last time this file appeared in results; null if never returned.
+    PathsResponse:
+      type: object
+      description: Per-path search analytics of one project.
+      additionalProperties: false
+      required:
+        [project_path, project_id, generation, search_hit_min_score, paths]
+      properties:
+        project_path:
+          type: string
+          description: Canonical absolute project root.
+        project_id:
+          type: string
+          description: SHA-256 hex digest of the project root.
+        generation:
+          type: [string, "null"]
+          description:
+            Committed generation name, or null without a committed generation.
+        search_hit_min_score:
+          type: number
+          minimum: -1
+          maximum: 1
+          description: Relevance threshold in effect.
+        paths:
+          type: array
+          description: Every file of the committed generation, sorted by path.
+          items:
+            $ref: "#/components/schemas/PathStat"
+    ProjectStats:
+      type: object
+      description: >-
+        Registration, index and search statistics of one project. Persisted
+        state may carry keys from earlier versions, so unknown keys are
+        retained. Keys other than the required ones appear once the
+        corresponding event has happened.
+      additionalProperties: true
+      required:
+        - project_path
+        - registered_at
+        - files
+        - chunks
+        - cache_hits
+        - cache_misses
+        - searches
+        - search_failures
+        - index_failures
+        - updates_detected
+        - generation
+        - project_id
+        - cache_hit_ratio
+        - search_relevance_hit_ratio
+        - search_result_hit_ratio
+        - query_cache_hit_ratio
+        - top_paths
+      properties:
+        project_path:
+          type: string
+          description: Canonical absolute project root.
+        project_id:
+          type: string
+          description: SHA-256 hex digest of the project root.
+        registered_at:
+          type: string
+          format: date-time
+          description: Time the project was registered.
+        files:
+          type: integer
+          minimum: 0
+          description:
+            Files with at least one chunk in the committed generation.
+        chunks:
+          type: integer
+          minimum: 0
+          description: Chunks in the committed generation.
+        generation:
+          type: [string, "null"]
+          description:
+            Committed generation name, or null before the first commit.
+        file_patterns:
+          type: [array, "null"]
+          description:
+            Shell globs selecting indexed files; null indexes all supported
+            files.
+          items:
+            type: string
+        watch_enabled:
+          type: boolean
+          description:
+            Change watching is enabled; absent means enabled. Clearing disables
+            it.
+        legacy_backup:
+          type: string
+          description: Backup directory of a migrated legacy index.
+        needs_rebuild:
+          type: boolean
+          description: A migrated legacy project still needs a full build.
+        cleared_at:
+          type: string
+          format: date-time
+          description: Time the index was last cleared.
+        files_scanned:
+          type: integer
+          minimum: 0
+          description:
+            Files found by the last scan after ignore rules and size limit.
+        files_supported:
+          type: integer
+          minimum: 0
+          description:
+            Scanned files with a supported extension that match the file
+            patterns.
+        files_skipped:
+          type: integer
+          minimum: 0
+          description: Scanned files without indexed chunks.
+        source_bytes:
+          type: integer
+          minimum: 0
+          description: Total bytes of supported files.
+        indexed_at:
+          type: string
+          format: date-time
+          description: Time the committed generation was built.
+        changes:
+          $ref: "#/components/schemas/IndexChanges"
+          description: Changes detected by the last committed indexing job.
+        reused_chunks:
+          type: integer
+          minimum: 0
+          description: Chunks carried over by the last committed indexing job.
+        model:
+          $ref: "#/components/schemas/ModelInfo"
+          description: Model that embedded the committed generation.
+        active_model:
+          $ref: "#/components/schemas/ModelInfo"
+          description:
+            Model that served this project's most recent encode request.
+        merkle_root:
+          type: [string, "null"]
+          description: Merkle root hash of the last scanned tree.
+        index_bytes:
+          type: integer
+          minimum: 0
+          description:
+            Bytes of the committed generation's vector index and chunk database.
+        index_failures:
+          type: integer
+          minimum: 0
+          description: Indexing jobs that failed (cancellations excluded).
+        updates_detected:
+          type: integer
+          minimum: 0
+          description:
+            Cumulative added, modified and deleted files over committed jobs.
+        cache_hits:
+          type: integer
+          minimum: 0
+          description: Embedding cache hits for all purposes.
+        cache_misses:
+          type: integer
+          minimum: 0
+          description: Embedding cache misses for all purposes.
+        cache_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Cache hits over cache lookups; 0.0 without lookups.
+        query_cache_hits:
+          type: integer
+          minimum: 0
+          description: Embedding cache hits for search queries.
+        query_cache_misses:
+          type: integer
+          minimum: 0
+          description: Embedding cache misses for search queries.
+        query_cache_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description:
+            Query cache hits over query cache lookups; 0.0 without lookups.
+        searches:
+          type: integer
+          minimum: 0
+          description: Search requests, including failed ones.
+        search_failures:
+          type: integer
+          minimum: 0
+          description: Search requests that raised an error.
+        search_relevance_hits:
+          type: integer
+          minimum: 0
+          description: Successful searches whose top score met the threshold.
+        search_relevance_misses:
+          type: integer
+          minimum: 0
+          description: Searches below the threshold, without results, or failed.
+        search_relevance_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description:
+            Relevance hits over relevance hits plus misses; 0.0 without
+            searches.
+        search_result_hits:
+          type: integer
+          minimum: 0
+          description: Searches that returned at least one result.
+        search_result_misses:
+          type: integer
+          minimum: 0
+          description: Searches without results or failed.
+        search_result_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description:
+            Result hits over result hits plus misses; 0.0 without searches.
+        search_zero_results:
+          type: integer
+          minimum: 0
+          description: Successful searches that returned no results.
+        search_seconds:
+          type: number
+          minimum: 0
+          description: Cumulative search time in seconds.
+        last_search_seconds:
+          type: number
+          minimum: 0
+          description: Duration of the most recent search in seconds.
+        last_search_at:
+          type: [string, "null"]
+          format: date-time
+          description: Time of the most recent search, or null.
+        last_search_top_score:
+          type: [number, "null"]
+          description:
+            Top score of the most recent search, or null without results.
+        top_paths:
+          type: array
+          maxItems: 10
+          description:
+            Most frequently returned paths, highest appearances first.
+          items:
+            $ref: "#/components/schemas/PathStat"
+    SearchTotals:
+      type: object
+      description: >-
+        Totals over all registered projects, computed before any project filter.
+        Ratios are hits over hits plus misses, 0.0 when both are zero.
+      additionalProperties: false
+      required:
+        - projects
+        - files
+        - chunks
+        - searches
+        - search_failures
+        - search_relevance_hits
+        - search_relevance_misses
+        - search_relevance_hit_ratio
+        - search_result_hits
+        - search_result_misses
+        - search_result_hit_ratio
+        - query_cache_hits
+        - query_cache_misses
+        - query_cache_hit_ratio
+        - cache_hits
+        - cache_misses
+        - cache_hit_ratio
+      properties:
+        projects:
+          type: integer
+          minimum: 0
+          description: Registered projects.
+        files:
+          type: integer
+          minimum: 0
+          description: Indexed files.
+        chunks:
+          type: integer
+          minimum: 0
+          description: Indexed chunks.
+        searches:
+          type: integer
+          minimum: 0
+          description: Search requests.
+        search_failures:
+          type: integer
+          minimum: 0
+          description: Failed search requests.
+        search_zero_results:
+          type: integer
+          minimum: 0
+          description: Successful searches that returned no results.
+        search_relevance_hits:
+          type: integer
+          minimum: 0
+          description: Relevance hits.
+        search_relevance_misses:
+          type: integer
+          minimum: 0
+          description: Relevance misses.
+        search_relevance_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Relevance hit ratio.
+        search_result_hits:
+          type: integer
+          minimum: 0
+          description: Searches with at least one result.
+        search_result_misses:
+          type: integer
+          minimum: 0
+          description: Searches without results or failed.
+        search_result_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Non-empty result ratio.
+        query_cache_hits:
+          type: integer
+          minimum: 0
+          description: Query embedding cache hits.
+        query_cache_misses:
+          type: integer
+          minimum: 0
+          description: Query embedding cache misses.
+        query_cache_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Query embedding cache hit ratio.
+        cache_hits:
+          type: integer
+          minimum: 0
+          description: Embedding cache hits for all purposes.
+        cache_misses:
+          type: integer
+          minimum: 0
+          description: Embedding cache misses for all purposes.
+        cache_hit_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Embedding cache hit ratio for all purposes.
+    JobStatus:
+      type: string
+      description: >-
+        Job lifecycle status. `succeeded`, `failed`, `cancelled` and
+        `interrupted` are terminal; `interrupted` marks jobs that were
+        unfinished when the daemon restarted.
+      enum: [queued, running, succeeded, failed, cancelled, interrupted]
+    Job:
+      type: object
+      description: >-
+        Durable indexing job. Persisted in service state, so unknown keys are
+        retained. Optional keys appear as the job progresses.
+      additionalProperties: true
+      required:
+        - job_id
+        - project_path
+        - status
+        - queued_at
+        - files_processed
+        - incremental
+        - file_patterns
+        - error
+      properties:
+        job_id:
+          type: string
+          description: Job identifier (32 hex characters).
+        project_path:
+          type: string
+          description: Canonical absolute project root.
+        status:
+          $ref: "#/components/schemas/JobStatus"
+          description: Current lifecycle status.
+        queued_at:
+          type: string
+          format: date-time
+          description: Time the job was queued.
+        started_at:
+          type: string
+          format: date-time
+          description: Time the job started running.
+        finished_at:
+          type: string
+          format: date-time
+          description: Time the job reached a terminal status.
+        duration_seconds:
+          type: number
+          minimum: 0
+          description: Running time in seconds; absent for interrupted jobs.
+        files_processed:
+          type: integer
+          minimum: 0
+          description: Changed files chunked and embedded so far.
+        files_total:
+          type: integer
+          minimum: 0
+          description:
+            Changed files to process; appears after the first file is processed.
+        incremental:
+          type: boolean
+          description:
+            Unchanged files reuse embeddings from the previous generation.
+        file_patterns:
+          type: [array, "null"]
+          description:
+            Shell globs selecting indexed files; null indexes all supported
+            files.
+          items:
+            type: string
+        error:
+          type: [string, "null"]
+          description:
+            Failure, cancellation or interruption reason; null otherwise.
+        result:
+          $ref: "#/components/schemas/IndexResult"
+          description:
+            Statistics of the committed generation; present on success.
+    IndexRequest:
+      type: object
+      description: Request to index one project.
+      additionalProperties: false
+      required: [directory_path]
+      properties:
+        directory_path:
+          type: string
+          description: Absolute path of an existing project root directory.
+        incremental:
+          type: boolean
+          default: true
+          description:
+            Reuse embeddings of unchanged files; false rebuilds the whole scope.
+        wait:
+          type: boolean
+          default: true
+          description:
+            Respond only after the job is terminal; false returns the queued
+            job.
+        file_patterns:
+          type: [array, "null"]
+          default: null
+          description: >-
+            Shell globs matched against project-relative paths; they define the
+            whole index scope. Null or empty indexes all supported, non-ignored
+            files.
+          items:
+            type: string
+    SearchRequest:
+      type: object
+      description: Semantic search request for one project.
+      additionalProperties: false
+      required: [project_path, query]
+      properties:
+        project_path:
+          type: string
+          description: Absolute registered project root.
+        query:
+          type: string
+          minLength: 1
+          pattern: \S
+          description:
+            Natural-language description of the code to find; not blank.
+        k:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+          description: Maximum number of results.
+        filters:
+          anyOf:
+            - type: object
+              additionalProperties:
+                type: string
+            - type: "null"
+          default: null
+          description: >-
+            Chunk metadata key to shell glob; every entry must match, e.g.
+            `{"relative_path": "src/*", "chunk_type": "function"}`.
+    SearchResult:
+      type: object
+      description: >-
+        One ranked chunk with its metadata. Chunk metadata is persisted with
+        generations, so unknown keys are retained.
+      additionalProperties: true
+      required:
+        - chunk_id
+        - content
+        - content_preview
+        - chunk_type
+        - start_line
+        - end_line
+        - file_path
+        - relative_path
+        - folder_structure
+        - name
+        - parent_name
+        - docstring
+        - decorators
+        - imports
+        - complexity_score
+        - tags
+        - score
+      properties:
+        chunk_id:
+          type: string
+          description:
+            Stable chunk identifier `<path>:<start>-<end>:<type>:<name>`.
+        content:
+          type: string
+          description: Full chunk source text.
+        content_preview:
+          type: string
+          maxLength: 400
+          description: First 400 characters of the chunk source.
+        chunk_type:
+          type: string
+          description:
+            Normalised syntax kind, e.g. `function`, `method`, `class` or
+            `section`.
+        start_line:
+          type: integer
+          minimum: 1
+          description: First source line, 1-based.
+        end_line:
+          type: integer
+          minimum: 1
+          description: Last source line, 1-based and inclusive.
+        file_path:
+          type: string
+          description: Absolute file path at indexing time.
+        relative_path:
+          type: string
+          description: Project-relative file path.
+        folder_structure:
+          type: array
+          description: Directory components of the relative path.
+          items:
+            type: string
+        name:
+          type: [string, "null"]
+          description: Declared symbol or heading name.
+        parent_name:
+          type: [string, "null"]
+          description: Enclosing container name for nested members.
+        docstring:
+          type: [string, "null"]
+          description: Extracted documentation text.
+        decorators:
+          type: array
+          description: Decorator source texts.
+          items:
+            type: string
+        imports:
+          type: array
+          description: Related imports; currently always empty.
+          items:
+            type: string
+        complexity_score:
+          type: integer
+          description: Estimated complexity; currently always 0.
+        tags:
+          type: array
+          description:
+            Semantic tags such as `async` or `export`, plus the language name.
+          items:
+            type: string
+        score:
+          type: number
+          description: Cosine similarity to the query or reference chunk.
+    SearchResponse:
+      type: object
+      description:
+        Search results; also the shape returned by similar-code lookups.
+      additionalProperties: false
+      required: [project_path, generation, results]
+      properties:
+        project_path:
+          type: string
+          description: Canonical absolute project root.
+        generation:
+          type: string
+          description: Committed generation that served the search.
+        results:
+          type: array
+          maxItems: 100
+          description: Results ordered by descending score.
+          items:
+            $ref: "#/components/schemas/SearchResult"
+    StatsSnapshot:
+      type: object
+      description: >-
+        Statistics snapshot of the service. Persisted state may carry keys from
+        earlier versions, so unknown keys are retained.
+      additionalProperties: true
+      required:
+        - schema_version
+        - daemon_id
+        - sequence
+        - started_at
+        - online
+        - projects
+        - jobs
+        - shared
+        - totals
+      properties:
+        schema_version:
+          type: integer
+          minimum: 1
+          description: Persisted state schema version.
+        daemon_id:
+          type: string
+          description:
+            Random identifier of the daemon that last wrote the state (32 hex
+            characters).
+        sequence:
+          type: integer
+          minimum: 0
+          description: State change counter; restarts at 0 for every daemon.
+        started_at:
+          type: string
+          format: date-time
+          description: Time the daemon started.
+        online:
+          type: boolean
+          description:
+            False for snapshots read from disk while no daemon serves them.
+        projects:
+          type: object
+          description: Registered projects keyed by canonical absolute root.
+          additionalProperties:
+            $ref: "#/components/schemas/ProjectStats"
+        jobs:
+          type: object
+          description: Indexing jobs keyed by job ID.
+          additionalProperties:
+            $ref: "#/components/schemas/Job"
+        shared:
+          $ref: "#/components/schemas/SharedStats"
+          description: Shared model and service counters.
+        totals:
+          $ref: "#/components/schemas/SearchTotals"
+          description: Totals over all registered projects.
+    PubSubEventType:
+      type: string
+      description: >-
+        Type of a pub-sub notification. `heartbeat` carries the latest sequence;
+        every other value names the state change that produced the event.
+      enum:
+        - cache.changed
+        - daemon.started
+        - daemon.stopped
+        - heartbeat
+        - index.cleared
+        - index.committed
+        - job.completed
+        - job.failed
+        - job.finished
+        - job.progress
+        - job.queued
+        - job.started
+        - model.changed
+        - model.loaded
+        - project.migrated
+        - project.registered
+        - search.completed
+        - stats.changed
+    PubSubEvent:
+      type: object
+      description: >-
+        Notification published on the service's private IPC pub-sub socket. A
+        sequence newer than the subscriber's snapshot, or a different daemon ID,
+        means the snapshot is stale.
+      additionalProperties: false
+      required: [type, daemon_id, sequence]
+      properties:
+        type:
+          $ref: "#/components/schemas/PubSubEventType"
+          description: Event type.
+        project_path:
+          type: [string, "null"]
+          description:
+            Affected project root, or null for service-wide events; absent on
+            heartbeats.
+        daemon_id:
+          type: string
+          description: Identifier of the publishing daemon.
+        sequence:
+          type: integer
+          minimum: 0
+          description: State sequence after the change.

@@ -1,0 +1,9 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.jest.json" },
+    { "path": "./tsconfig.playwright.json" }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "lib/test",
+    "paths": {
+      "@code-search-local/code-search-local-api": ["./src/index.ts"],
+      "@code-search-local/code-search-local-api/*": ["./src/*"]
+    }
+  },
+  "references": [{ "path": "./tsconfig.esm.json" }],
+  "include": ["tests"]
+}

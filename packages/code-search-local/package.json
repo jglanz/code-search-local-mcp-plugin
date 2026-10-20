@@ -1,0 +1,10 @@
+{
+  "name": "@code-search-local/code-search-local",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "cd ../.. && hatch run test",
+    "coverage": "cd ../.. && hatch run coverage",
+    "lint": "cd ../.. && hatch run lint"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "lib": ["ESNext"],
+    "allowJs": false,
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "composite": true,
+    "incremental": true,
+    "noFallthroughCasesInSwitch": false,
+    "allowSyntheticDefaultImports": true,
+    "noImplicitAny": false,
+    "disableSizeLimit": false,
+    "preserveConstEnums": true,
+    "resolveJsonModule": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "sourceMap": false,
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "strictNullChecks": false,
+    "strict": false,
+    "preserveWatchOutput": true,
+    "target": "ES2022",
+    "types": ["node", "jest"],
+    "paths": {
+      "@code-search-local/code-search-local-api": ["../../packages/code-search-local-api/src/index.ts"],
+      "@code-search-local/code-search-local-api/*": ["../../packages/code-search-local-api/src/*"],
+      "@code-search-local/code-search-local-webapp": ["../../packages/code-search-local-webapp/src/index.ts"],
+      "@code-search-local/code-search-local-webapp/*": ["../../packages/code-search-local-webapp/src/*"]
+    }
+  },
+  "include": ["src", "types"],
+  "exclude": [
+    "lib",
+    "dist",
+    "node_modules",
+    "**/*.js",
+    "**/lib/**",
+    "**/dist/**",
+    "**/node_modules/**"
+  ]
+}

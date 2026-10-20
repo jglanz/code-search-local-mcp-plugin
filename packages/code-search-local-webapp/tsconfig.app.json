@@ -1,0 +1,18 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/esm",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["webpack/module"],
+    "paths": {
+      "@code-search-local/code-search-local-webapp": ["./src/index.ts"],
+      "@code-search-local/code-search-local-webapp/*": ["./src/*"],
+      "@code-search-local/code-search-local-api": ["../code-search-local-api/src/index.ts"],
+      "@code-search-local/code-search-local-api/*": ["../code-search-local-api/src/*"]
+    }
+  },
+  "references": [{ "path": "../code-search-local-api/tsconfig.esm.json" }],
+  "include": ["src"]
+}

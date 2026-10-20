@@ -1,0 +1,38 @@
+{
+  "name": "@code-search-local/code-search-local-root",
+  "private": true,
+  "scripts": {
+    "generate": "pnpm -r --if-present run generate",
+    "compile": "pnpm run generate && tsc -b tsconfig.json",
+    "compile:watch": "pnpm run generate && tsc -b tsconfig.json -w --preserveWatchOutput",
+    "build": "pnpm run compile && pnpm --filter @code-search-local/code-search-local-webapp run build:webpack",
+    "dev": "pnpm run generate && pnpm --filter @code-search-local/code-search-local-webapp run dev",
+    "format": "prettier --write \"**/*.{ts,tsx,mts,md,yaml,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,mts,md,yaml,yml}\"",
+    "lint": "eslint . --max-warnings 0",
+    "test": "pnpm run test:runner && pnpm run compile && NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:runner": "node --test scripts/tests/*.test.mjs",
+    "test:e2e": "pnpm run build && pnpm --filter @code-search-local/code-search-local-webapp run test:e2e",
+    "check": "pnpm run generate && ./scripts/check.mjs",
+    "clean": "pnpm -r run clean"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@jest/globals": "^30.5.2",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.6.5",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "jest": "^30.5.2",
+    "prettier": "^3.9.10",
+    "ts-jest": "^29.4.14",
+    "ts-node": "^10.9.2",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.1",
+    "zx": "^8.8.5"
+  },
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24.9"
+  }
+}

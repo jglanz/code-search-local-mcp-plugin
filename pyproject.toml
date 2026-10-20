@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling==1.32.4"]
+requires = ["hatchling==1.32.4", "datamodel-code-generator==0.86.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -27,7 +27,7 @@ server = [
   "fastmcp==4.0.7", "starlette==1.7.0", "uvicorn==0.53.0", "watchfiles==1.3.0",
   "sentence-transformers==6.1.0", "huggingface-hub==1.32.0",
   "numpy==2.5.3", "faiss-cpu==1.15.1", "pathspec==1.1.1",
-  "tree-sitter==0.26.0", "tree-sitter-language-pack==1.20.0",
+  "tree-sitter==0.26.0", "tree-sitter-language-pack==1.20.0", "pydantic==2.12.5",
 ]
 cpu = ["torch==2.14.0"]
 cuda = ["torch==2.14.0"]
@@ -45,6 +45,8 @@ dev = [
   "httpx2==2.13.1",
   "hatch==1.18.1",
   "pylint==4.0.9",
+  "datamodel-code-generator==0.86.0",
+  "openapi-spec-validator==0.8.5",
 ]
 
 [project.scripts]
@@ -54,16 +56,26 @@ code-search-local = "code_search_local.cli:main"
 Repository = "https://github.com/jglanz/code-search-local-mcp-plugin"
 
 [tool.hatch.version]
-path = "src/code_search_local/__init__.py"
+path = "packages/code-search-local/src/code_search_local/__init__.py"
 
 [tool.hatch.build.targets.sdist]
+# Never traverse ignored directories: pnpm's node_modules links back into packages/, and
+# Hatch's walk skips directories it has already seen through such a link.
+skip-excluded-dirs = true
 include = [
-  "/src/", "/plugins/", "/.claude-plugin/", "/scripts/", "/tests/", "/docs/",
+  "/packages/code-search-local/src/", "/packages/code-search-local/scripts/", "/packages/code-search-local/tests/",
+  "/packages/code-search-local-api/openapi.yaml",
+  "/plugins/", "/.claude-plugin/", "/docs/",
   "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/CLAUDE.md", "/AGENTS.md", "/.agents/rules/", "/.gitignore",
 ]
 
+# Generates the API models from the OpenAPI document and bundles generated files and the
+# built web dashboard; see the hook module's docstring.
+[tool.hatch.build.hooks.custom]
+path = "packages/code-search-local/scripts/api_models.py"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/code_search_local"]
+packages = ["packages/code-search-local/src/code_search_local"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "pyproject.toml" = "code_search_local/runtime/pyproject.toml"
@@ -87,17 +99,20 @@ sync = 'uv sync --project "{root}" --active --locked --extra server --extra {env
 cli = "python -m code_search_local {args}"
 serve = "python -m code_search_local serve --backend {env:CODE_SEARCH_DEV_BACKEND} {args}"
 setup = 'python -m code_search_local setup --source "{root}" --backend {env:CODE_SEARCH_DEV_BACKEND} {args}'
-test = "python -m pytest {args:tests}"
+generate = "python packages/code-search-local/scripts/api_models.py"
+test = ["generate", "python -m pytest {args:packages/code-search-local/tests}"]
 coverage = [
-  "test --cov --cov-report=json:coverage.json {args:tests}",
-  "python scripts/check_coverage.py",
+  "generate",
+  "python -m pytest --cov --cov-report=json:coverage.json {args:packages/code-search-local/tests}",
+  "python packages/code-search-local/scripts/check_coverage.py",
 ]
 lint = [
-  "ruff check --select F,I {args:src scripts tests}",
-  "python scripts/check_code_rules.py",
+  "generate",
+  "ruff check --select F,I {args:packages/code-search-local}",
+  "python packages/code-search-local/scripts/check_code_rules.py",
 ]
-rules = "python scripts/check_code_rules.py"
-fmt = "ruff format {args:src scripts tests}"
+rules = "python packages/code-search-local/scripts/check_code_rules.py"
+fmt = "ruff format {args:packages/code-search-local}"
 
 [tool.hatch.envs.cpu]
 template = "default"
@@ -121,7 +136,8 @@ builder = true
 skip-install = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["packages/code-search-local/tests"]
+pythonpath = ["packages/code-search-local"]
 asyncio_mode = "auto"
 markers = [
   "unit: unit tests", "integration: integration tests",
@@ -135,17 +151,31 @@ markers = [
 patch = ["subprocess"]
 branch = true
 source = ["code_search_local"]
+# Generated from the OpenAPI document at build time.
+omit = ["*/code_search_local/api/models.py"]
 
 [tool.coverage.report]
 show_missing = true
 fail_under = 90
 
 [tool.ruff]
-extend-exclude = ["tests/test_data", "tests/fixtures"]
+extend-exclude = [
+  "packages/code-search-local/tests/test_data", "packages/code-search-local/tests/fixtures",
+  # Generated from the OpenAPI document at build time.
+  "packages/code-search-local/src/code_search_local/api/models.py",
+]
+# First-party roots for import sorting: the application package and the test/script packages.
+src = ["packages/code-search-local/src", "packages/code-search-local"]
 target-version = "py312"
 line-length = 100
 
 [tool.uv]
+# Rebuild the editable installation, which regenerates the API models, when they change.
+cache-keys = [
+  {file = "pyproject.toml"},
+  {file = "packages/code-search-local-api/openapi.yaml"},
+  {file = "packages/code-search-local/scripts/api_models.py"},
+]
 conflicts = [[{extra = "cpu"}, {extra = "cuda"}, {extra = "rocm"}]]
 
 [[tool.uv.index]]

@@ -1,0 +1,12 @@
+{
+  "extends": "./etc/tsconfig/tsconfig.base.json",
+  "compilerOptions": {
+    "preserveWatchOutput": true
+  },
+  "files": [],
+  "exclude": ["**/node_modules/**", "**/lib/**", "**/dist/**", "node_modules", "lib", "dist"],
+  "references": [
+    { "path": "./packages/code-search-local-api/tsconfig.json" },
+    { "path": "./packages/code-search-local-webapp/tsconfig.json" }
+  ]
+}

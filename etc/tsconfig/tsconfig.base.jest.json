@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ESNext",
+    "ignoreDeprecations": "6.0",
+    "composite": true,
+    "sourceMap": true,
+    "inlineSourceMap": false,
+    "types": ["node", "jest"]
+  }
+}

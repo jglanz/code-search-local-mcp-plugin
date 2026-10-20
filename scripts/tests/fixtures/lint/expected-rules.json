@@ -1,0 +1,122 @@
+{
+  "switch.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "ts-pattern"
+  },
+  "inline-iife.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "IIFE"
+  },
+  "null-union-return.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "| null"
+  },
+  "inline-type-literal.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "inline object types"
+  },
+  "pick-parameter.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "Pick<T,K>"
+  },
+  "string-literal-union.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "string-literal unions"
+  },
+  "as-option-await.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "asOption(await"
+  },
+  "member-coalesce.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "Destructure with a default"
+  },
+  "error-restring.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "restring"
+  },
+  "bare-error-in-handler.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "bare Error in an error handler"
+  },
+  "default-export.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "No default exports"
+  },
+  "extensionless-relative.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "end in `.js`"
+  },
+  "for-loop.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "forEach/map/filter/reduce"
+  },
+  "react-fc.tsx": {
+    "ruleId": "no-restricted-syntax",
+    "message": "React.FC"
+  },
+  "styled.tsx": {
+    "ruleId": "no-restricted-syntax",
+    "message": "sx"
+  },
+  "exported-log.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "export const log"
+  },
+  "success-branch.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "Either"
+  },
+  "console.ts": {
+    "ruleId": "no-console",
+    "message": null
+  },
+  "process-stdout.ts": {
+    "ruleId": "no-restricted-properties",
+    "message": "logging appenders"
+  },
+  "src-import.ts": {
+    "ruleId": "no-restricted-imports",
+    "message": "src/"
+  },
+  "lodash-import.ts": {
+    "ruleId": "no-restricted-imports",
+    "message": "lodash-es"
+  },
+  "mui-root-import.ts": {
+    "ruleId": "no-restricted-imports",
+    "message": "Deep default import"
+  },
+  "require-name.ts": {
+    "ruleId": "id-match",
+    "message": null
+  },
+  "eqeqeq.ts": {
+    "ruleId": "eqeqeq",
+    "message": null
+  },
+  "unused-var.ts": {
+    "ruleId": "@typescript-eslint/no-unused-vars",
+    "message": null
+  },
+  "identity-arrow.ts": {
+    "ruleId": "csl-local/no-identity-arrow",
+    "message": null
+  },
+  "prefer-const.ts": {
+    "ruleId": "prefer-const",
+    "message": null
+  },
+  "no-var.ts": {
+    "ruleId": "no-var",
+    "message": null
+  },
+  "preserve-caught-error.ts": {
+    "ruleId": "preserve-caught-error",
+    "message": null
+  },
+  "default-export-specifier.ts": {
+    "ruleId": "no-restricted-syntax",
+    "message": "No default exports"
+  }
+}

@@ -42,8 +42,23 @@ All 10 artifact/source-workflow checks passed with the new JSONC dependency and 
 
 All nine MCP tools now expose task-oriented descriptions, intent examples, argument guidance and next steps. HTTP `tools/list` tests check descriptions and every parameter schema, indexing defaults, and read-only/destructive annotations. MCP connection negotiation checks workspace selection and indexing instructions; the existing call tests exercise all nine tools. The final deterministic run passed 202 tests (18 external checks skipped by default), with 97.81% line and 91.94% branch coverage. Ruff, formatting, Git whitespace, locked dependency and final wheel/sdist checks passed.
 
-See [tests/README.md](../tests/README.md) for reproducible commands. CI runs deterministic tests and artifact installations; the manually dispatched release workflow requires an authenticated dual-GPU runner before its optional protected PyPI publication step. No package or marketplace was published during this implementation.
+See [packages/code-search-local/tests/README.md](../packages/code-search-local/tests/README.md) for reproducible commands. CI runs deterministic tests and artifact installations; the manually dispatched release workflow requires an authenticated dual-GPU runner before its optional protected PyPI publication step. No package or marketplace was published during this implementation.
 
 ## Consolidated plugin layout
 
-Both native CLIs were tested against one `.claude-plugin/marketplace.json` catalog and one `plugins/code-search-local/plugin.json` portable manifest. Redundant `.agents/`, `.codex-plugin/` and nested `.claude-plugin/` copies were removed. This uses Codex's [documented portable manifest and compatible marketplace loader](https://developers.openai.com/plugins/build/plugins). Claude discovers the skill through its catalog entry and standard `skills/` directory. All pytest fixtures live under `tests/conftest.py`.
+Both native CLIs were tested against one `.claude-plugin/marketplace.json` catalog and one `plugins/code-search-local/plugin.json` portable manifest. Redundant `.agents/`, `.codex-plugin/` and nested `.claude-plugin/` copies were removed. This uses Codex's [documented portable manifest and compatible marketplace loader](https://developers.openai.com/plugins/build/plugins). Claude discovers the skill through its catalog entry and standard `skills/` directory. All pytest fixtures live under `packages/code-search-local/tests/conftest.py`.
+
+## Monorepo layout, search analytics and dashboard serving (2026-10-19)
+
+Validated locally on 2026-10-19 on branch `main`, with uncommitted changes based on `f3092e938b4e858dfab39e31748ed6191eac3e38`. The Python service moved into `packages/code-search-local/` (`src`, `tests`, `scripts`) of a pnpm workspace; `pyproject.toml`, `uv.lock` and the plugin tree stay at the repository root. Paths in the dated entries above refer to the earlier layout.
+
+| Check | Result / assertions |
+|---|---|
+| Deterministic suite | `hatch run coverage`: 344 passed, 21 opt-in acceptance tests skipped; 98.53% lines, 93.28% branches; each floor is 90% |
+| New test modules | 37 tests: search analytics through a real engine (8), web API and dashboard serving (8), API model generation and build hook (3), analytics settings and offline statistics (5), statistics TUI (11), `web` command (2) |
+| Static checks | `hatch run lint` (API model generation, Ruff F/I, code-rule audit over 96 files) passed; `pnpm run format:check` passed |
+| Release artifacts | `hatch build` into a temporary directory: the wheel contains the generated `code_search_local/api/models.py` and `openapi.json` and, with a dashboard build present, `code_search_local/assets/webapp/index.html`; the sdist contains `openapi.yaml` and the dashboard build but no generated models |
+| Fake-model service | `tests/daemon.py --fake` with temporary storage on a free port: indexing, three searches, `stats --json` with `totals`, per-project ratios, `top_paths` and `project_id`; `/api/v1/paths` with per-file chunk counts and 400 for unregistered or missing projects; `/api/v1/openapi.json` with 401 without the token; 307 redirects from `/` and `/ui`; dashboard security headers, client-route fallback, 404 for path traversal and 403 for a foreign Origin; `web --no-open` URL; and an offline snapshot with retained totals and top paths after shutdown |
+| Web dashboard | `pnpm check` passed every stage (layout, conventions, format, lint, build, tests: 86 workspace script tests and 57 jest suites with 282 tests); `pnpm test:e2e` passed its 4 Playwright specs in Chromium against `tests/daemon.py --fake`; a `pnpm dev` smoke on free ports served `/ui/` and client routes, proxied `/api` with the token (200) and without it (401) while removing the dev server's `Origin`, and answered 504 once the service stopped |
+
+The fullscreen live view was exercised through the headless Textual tests, not an interactive terminal. The opt-in packaging, GPU, systemd, marketplace, OpenCode and real-client lanes were not rerun for these changes; their results above predate the layout change.

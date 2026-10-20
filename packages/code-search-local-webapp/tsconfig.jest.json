@@ -1,0 +1,22 @@
+{
+  "extends": "../../etc/tsconfig/tsconfig.base.jest.json",
+  "compilerOptions": {
+    "rootDir": "tests",
+    "outDir": "lib/test",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node", "jest", "@testing-library/jest-dom", "webpack/module"],
+    "paths": {
+      "@code-search-local/code-search-local-webapp": ["./src/index.ts"],
+      "@code-search-local/code-search-local-webapp/*": ["./src/*"],
+      "@code-search-local/code-search-local-api": ["../code-search-local-api/src/index.ts"],
+      "@code-search-local/code-search-local-api/*": ["../code-search-local-api/src/*"]
+    }
+  },
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "../code-search-local-api/tsconfig.esm.json" }
+  ],
+  "include": ["tests"],
+  "exclude": ["tests/e2e"]
+}

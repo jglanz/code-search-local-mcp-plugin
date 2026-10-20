@@ -15,7 +15,10 @@ This is an independently maintained hard fork. The Python package and CLI are na
 - [Claude and Codex marketplace installation](#claude-and-codex-marketplace-installation)
 - [MCP tools and resources](#mcp-tools-and-resources)
 - [Troubleshooting](#troubleshooting)
+- [Repository layout](#repository-layout)
 - [Architecture and development](#architecture-and-development)
+
+Further guides: [statistics terminal UI](docs/tui.md), [web dashboard](docs/webapp.md), [hardware validation](docs/validation.md) and [dependency selection](docs/dependencies.md).
 
 ## Quick start
 
@@ -23,6 +26,7 @@ This is an independently maintained hard fork. The Python package and CLI are na
 
 - Linux with a running **user systemd manager** for managed setup. Run `systemctl --user status` to check it; run setup as your normal user.
 - Python **3.12–3.14**, Git, and Hatch **1.18.1** for the repository workflows below. Install Hatch with `uv tool install hatch==1.18.1` or `pipx install hatch==1.18.1`. The checkout uses Python 3.12 environments at `.venvs/cpu`, `.venvs/cuda` and `.venvs/rocm`; Hatch and uv are declared in `pyproject.toml`. Installing an existing wheel does not require Hatch.
+- Only to build the web dashboard or work on the TypeScript packages: Node.js **24.9** or later (development uses 24.18.0) and pnpm **12.6.0**, the version pinned by `packageManager` in `package.json`. The service, CLI and terminal statistics need neither; without a dashboard build, only the `/ui/` pages are unavailable.
 - Optionally, Claude Code, Codex or OpenCode. Repeat `--agent-harness` to select clients; `--agent-harness all` selects all three. The default `none` installs only the service.
 - For GPU use, a compatible installed NVIDIA or AMD driver. Setup installs GPU Python libraries into its own virtual environment and does not replace system drivers or the system ROCm toolkit.
 - Internet access for the initial dependencies, model and parser-grammar downloads. The default model is [`google/embeddinggemma-300m`](https://huggingface.co/google/embeddinggemma-300m). Complete any model access approval and authenticate with Hugging Face, or supply `HF_TOKEN` in the setup shell, before downloading a gated model.
@@ -115,7 +119,7 @@ code-search-local setup --source /absolute/path/to/code-search-local-mcp-plugin 
   --backend rocm --agent-harness claude --agent-harness codex
 ```
 
-`--source` and `--package-source` cannot be combined. Source setup uses the live `src/code_search_local` tree through an editable installation; it does not copy the application into a versioned release runtime. The backend Python path comes from the checkout's Hatch configuration. The existing `setup` command without `--source` remains available for [release installations](#installation-options).
+`--source` and `--package-source` cannot be combined. Source setup uses the live `packages/code-search-local/src/code_search_local` tree through an editable installation; it does not copy the application into a versioned release runtime. The backend Python path comes from the checkout's Hatch configuration. The existing `setup` command without `--source` remains available for [release installations](#installation-options).
 
 ### Iterate against Claude, Codex and OpenCode
 
@@ -173,20 +177,21 @@ Direct invocation uses the same editable source, without activation or `PYTHONPA
 
 ```sh
 hatch run test
-hatch run test tests/unit/test_config_cli.py -q
+hatch run test packages/code-search-local/tests/unit/test_config_cli.py -q
 hatch run coverage
 hatch run lint
 hatch run fmt --check
+hatch run generate
 hatch build
 ```
 
-`hatch run fmt` applies formatting. `coverage` enforces separate line and branch floors. `hatch build` is only needed to produce release wheel/sdist artifacts in `dist/`; source setup and iteration do not depend on it. Use the configured `hatch run test`/`lint` scripts instead of Hatch's automatic `hatch test`/`hatch check` environments. See [tests/README.md](tests/README.md) for GPU, source-systemd, packaging and real-client acceptance commands.
+`hatch run generate` regenerates the git-ignored API models from `packages/code-search-local-api/openapi.yaml`; `test`, `coverage` and `lint` run it first, and every wheel or editable build runs it through the Hatch build hook. `hatch run fmt` applies formatting. `coverage` enforces separate line and branch floors. `hatch build` is only needed to produce release wheel/sdist artifacts in `dist/`; source setup and iteration do not depend on it. Use the configured `hatch run test`/`lint` scripts instead of Hatch's automatic `hatch test`/`hatch check` environments. See [packages/code-search-local/tests/README.md](packages/code-search-local/tests/README.md) for GPU, source-systemd, packaging and real-client acceptance commands.
 
 ## Installation options
 
 ### Install a locally built wheel
 
-Build once with `hatch build`, then choose **one** CLI installation method. These examples run from the checkout:
+Build once with `hatch build`, then choose **one** CLI installation method. To include the [web dashboard](#open-the-web-dashboard), run `pnpm install` and `pnpm build` before `hatch build`. These examples run from the checkout:
 
 | Installer | Command |
 |---|---|
@@ -462,10 +467,13 @@ All three harnesses route tools through the same service. Tools always carry the
 # A complete report, retained in terminal scrollback.
 code-search-local stats
 
+# The same report as plain text, without colour or control sequences.
+code-search-local stats > stats.txt
+
 # Restrict project and job rows to one workspace.
 code-search-local stats --project ./my-project
 
-# Fullscreen live view; q or Escape exits.
+# Fullscreen live view in a terminal; q or Escape exits, r refreshes now, d toggles the details table.
 code-search-local stats --live
 code-search-local stats --project /absolute/path/to/project --live
 
@@ -474,20 +482,39 @@ code-search-local stats --json
 code-search-local stats --project ./my-project --json > project-stats.json
 ```
 
-`stats` uses a Textual inline report; `--live` uses a fullscreen Textual app. Live changes arrive through private ZeroMQ pub-sub IPC, with heartbeat/reconnect and sequence-gap recovery. `--json` emits JSON to stdout and cannot be combined with `--live`. Unknown project roots return an error. When the service is unreachable, statistics can be read from the persisted database and are labeled as an offline snapshot.
+In a terminal, `stats` uses a Textual inline report; when stdout is a file or a pipe, it prints the same sections as plain text, `COLUMNS` or 160 columns wide. `--live` uses a fullscreen Textual app and requires a terminal on stdout. All of them show a summary (connection, daemon, model/backend/device, residency, search hit threshold, totals and the relevance, non-empty-result and query-cache hit rates with hit/miss counts), a projects table, each project's most often returned paths, the newest 20 index jobs with progress, and the complete key/value details. The live header shows online/offline state and the local time of the last update. Live changes arrive through private ZeroMQ pub-sub IPC, with heartbeat/reconnect and sequence-gap recovery; after an error, the live view notifies, resubscribes with a backoff of up to 15 seconds and resumes when the service answers. `--json` emits JSON to stdout and cannot be combined with `--live`; use it whenever a program reads the output. Unknown project roots return an error. When the service is unreachable, statistics can be read from the persisted database and are labeled as an offline snapshot. The [statistics terminal UI guide](docs/tui.md) describes every section and column, the live-view bindings and update mechanism, and the exact hit/miss definitions.
 
 | Scope | Statistics |
 |---|---|
-| Project index | Canonical root, files, chunks, generation, index bytes, registration/index timestamps |
+| Project index | Canonical root, `project_id` (SHA-256 of the root), files, chunks, generation, index bytes, registration/index timestamps |
 | Changes | Detected additions/modifications/deletions, reused chunks, indexing failures |
-| Cache and search | Embedding cache hits/misses and ratio, searches, latency |
+| Cache and search | Embedding cache hits/misses and ratio, searches, failures, latency, last search time and top score |
+| Search hit rates | Relevance hits/misses (top result at or above `search_hit_min_score`), non-empty result hits/misses, zero-result searches, query embedding cache hits/misses, each pair with its `*_hit_ratio` |
+| Top paths | `top_paths`: up to 10 files most often returned by the project's searches, with appearances, hits, misses, hit ratio, top-ranked count, chunk appearances, best score and last-seen time |
+| Totals | `totals`: registered projects, files, chunks, searches, failures, zero-result searches and every hit/miss pair with its ratio, summed over all projects |
 | Jobs | Project, job ID, status, processed files, timing, progress and errors |
 | Model/device | Model ID/revision, backend, GPU/device, fallback information |
-| Shared service | Model acquisition/load counts, resident state, inference time, GPU allocation, daemon identity |
+| Shared service | Model acquisition/load counts, resident state, inference time, GPU allocation, daemon identity, search hit threshold in effect |
 
-Project filtering retains shared service/model context. `model` describes the committed index; `active_model` describes the most recent embedding operation. Counters persist across restarts; `model_resident` reports the current service's loaded state when online. An offline snapshot is historical, not a live GPU reading.
+Project filtering retains shared service/model context and `totals`, which always cover every registered project. `model` describes the committed index; `active_model` describes the most recent embedding operation. Counters persist across restarts; `model_resident` reports the current service's loaded state when online. An offline snapshot is historical, not a live GPU reading. Search counters and per-path history survive `clear_index` and reindexing, so top paths can include files that are no longer indexed.
 
 Use `code-search-local warmup` to acquire/load the model through the existing daemon without indexing a project.
+
+### Open the web dashboard
+
+```sh
+# Print the dashboard URL, including the service token, and open it in the default browser.
+code-search-local web
+
+# Only print the URL, for example on a remote machine whose service port you forward.
+code-search-local web --no-open
+```
+
+The service serves the dashboard at `<service url>/ui/` (`/` and `/ui` redirect there). The overview shows the service status, totals, the relevance, non-empty-result and query-cache hit rates, and every project; a project's page adds its own rates, top paths, recent indexing jobs, and a directory tree and sortable, filterable table of its indexed files. Every view refreshes every 2 seconds.
+
+The URL printed by `web` carries the token in its `#token=` fragment. To keep the token out of the browser's command line, which other local processes can read, `web` opens a private launch page (mode `0600`, under `code-search-local/web/` in `$XDG_RUNTIME_DIR`, or `/tmp/code-search-local-<uid>` without it) that forwards to that URL; a later run removes launch pages older than five minutes. A sandboxed browser, such as a snap package, may be unable to read the page; then use `--no-open` and open the printed URL. The dashboard stores the token in the tab's `sessionStorage` and removes the fragment with `history.replaceState`, which replaces the tab's session history entry; the browser's global history may still record the original URL, so use a private window or clear that entry if that matters. Without a token, or after the service rejects it, the dashboard asks you to run `code-search-local web` or paste the token. Dashboard files need no token, but every request still passes the loopback Host/Origin checks, and all `/api/v1` data requests use the bearer token. Over SSH, forward the service's own port number (`ssh -L 8000:127.0.0.1:8000 …`); a different local port fails the Host check with 403.
+
+The dashboard comes from the first available build: the `webapp_dir` setting (`CODE_SEARCH_WEBAPP_DIR`) when configured, otherwise `packages/code-search-local-webapp/dist` of the source checkout running the service, otherwise the copy bundled into a release wheel. In a checkout, build it from the repository root with `pnpm install` followed by `pnpm build` (this needs the Node.js and pnpm [prerequisites](#1-check-prerequisites)); until a build exists, `/ui/` answers 503 with that instruction. The service picks up a new build on the next page load, without a restart. The [web dashboard guide](docs/webapp.md) describes every view, the security model, development with `pnpm dev`, packaging, tests and troubleshooting.
 
 ## Configuration reference
 
@@ -509,6 +536,10 @@ The shared CLI options below are accepted by `setup`, `serve` and `doctor`, exce
 | `port` | `--port PORT` | `CODE_SEARCH_PORT` | `8000` |
 | `watch` | serve: `--watch` / `--no-watch` | `CODE_SEARCH_WATCH` | `true` |
 | `offline` | serve: `--offline` / `--online` | `CODE_SEARCH_OFFLINE` | `false` |
+| `search_hit_min_score` | `--search-hit-min-score SCORE` | `CODE_SEARCH_SEARCH_HIT_MIN_SCORE` | `0.5`; accepted range −1.0 to 1.0 |
+| `webapp_dir` | JSON/environment only | `CODE_SEARCH_WEBAPP_DIR` | empty: the checkout's `packages/code-search-local-webapp/dist`, then the wheel's bundled dashboard |
+
+`search_hit_min_score` only affects statistics: a search whose top result scores at least this cosine similarity counts as a relevance hit, and a file counts a per-path hit when one of its returned chunks reaches it. The service reads it at startup and reports it as `shared.search_hit_min_score`; earlier counters are not recomputed when it changes. See [search hit and miss statistics](docs/tui.md#search-hit-and-miss-statistics). `webapp_dir` names a directory containing a built dashboard (`index.html` and its assets); when it is set, no other location is tried.
 
 `--agent-harness none|codex|claude|opencode|all` is optional and repeatable, defaults to `none`, and selects registration targets rather than a backend setting. Use `all` for all three harnesses or repeat the flag for a subset; `both` is not an `--agent-harness` value. `--package-source FILE` is setup-only and selects a locally built wheel for the persistent runtime.
 
@@ -555,6 +586,7 @@ Setup writes all effective settings. The following is a valid partial configurat
   "port": 8000,
   "watch": true,
   "offline": false,
+  "search_hit_min_score": 0.5,
   "project_workers": 4,
   "chunk_workers": 4,
   "model_batch_size": 16,
@@ -620,26 +652,26 @@ Uninstall is repeatable. If a harness config is malformed or its native plugin r
 
 ### Review and clean current and legacy installations
 
-[`scripts/clean_existing_installations_and_configs.py`](scripts/clean_existing_installations_and_configs.py) inventories Linux installations under both `code-search-local` and the former `claude-context-local` name, including case and underscore variants and the legacy `claude-code-search` storage directories. Run it from this checkout using an existing project environment:
+[`packages/code-search-local/scripts/clean_existing_installations_and_configs.py`](packages/code-search-local/scripts/clean_existing_installations_and_configs.py) inventories Linux installations under both `code-search-local` and the former `claude-context-local` name, including case and underscore variants and the legacy `claude-code-search` storage directories. Run it from this checkout using an existing project environment:
 
 ```sh
-.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run
+.venvs/cpu/bin/python packages/code-search-local/scripts/clean_existing_installations_and_configs.py --dry-run
 
 # Machine-readable inventory; includes planned actions and references needing review:
-.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run --json
+.venvs/cpu/bin/python packages/code-search-local/scripts/clean_existing_installations_and_configs.py --dry-run --json
 
 # Additional project-local configs/custom harness profiles; both options are repeatable:
-.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run \
+.venvs/cpu/bin/python packages/code-search-local/scripts/clean_existing_installations_and_configs.py --dry-run \
   --project-root /path/to/workspace --scan-root /path/to/custom/profile
 
 # Preview index removal while retaining runtime environments and packages:
-.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run --remove-indexes
+.venvs/cpu/bin/python packages/code-search-local/scripts/clean_existing_installations_and_configs.py --dry-run --remove-indexes
 
 # Preview uninstalling runtime/CLI packages while retaining indexes:
-.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run --remove-runtime-packages
+.venvs/cpu/bin/python packages/code-search-local/scripts/clean_existing_installations_and_configs.py --dry-run --remove-runtime-packages
 
 # Preview both optional removals (models and source environments are always retained):
-.venvs/cpu/bin/python scripts/clean_existing_installations_and_configs.py --dry-run --remove-all
+.venvs/cpu/bin/python packages/code-search-local/scripts/clean_existing_installations_and_configs.py --dry-run --remove-all
 ```
 
 Use `.venvs/cuda/bin/python` or `.venvs/rocm/bin/python` if that is your installed environment. Dependencies come from `pyproject.toml`; this script reuses Click, json5, tomlkit and uv without installing anything during discovery. No bundle or running service is required.
@@ -771,18 +803,22 @@ Filters match chunk metadata fields with shell globs. The CLI's `search` command
 
 Resources are `code-search-local://stats` and `code-search-local://stats/{project_id}`, where `project_id` is the SHA-256 of the canonical root. These are **MCP resource identifiers**, read with `resources/read` over the established connection. They do not register an operating-system or browser URL handler.
 
-The authenticated administrative API used by the CLI exposes:
+The administrative API used by the CLI and the web dashboard, and the dashboard's own routes, are:
 
-| Method | Route | Purpose |
-|---|---|---|
-| GET | `/api/v1/health` | Service health and daemon identity |
-| POST | `/api/v1/model` | Shared model warmup |
-| GET | `/api/v1/stats` | Snapshot; optional `project` query parameter |
-| POST | `/api/v1/index` | Index a `directory_path`; accepts `wait`, `incremental`, `file_patterns` |
-| POST | `/api/v1/search` | Search a `project_path` with `query`, optional `k`/`filters` |
-| GET / DELETE | `/api/v1/jobs/{job_id}` | Inspect/cancel; requires the `project` query parameter |
+| Method | Route | Token | Purpose |
+|---|---|---|---|
+| GET | `/api/v1/health` | Bearer | Service health and daemon identity |
+| POST | `/api/v1/model` | Bearer | Shared model warmup |
+| GET | `/api/v1/stats` | Bearer | Snapshot; optional `project` query parameter |
+| POST | `/api/v1/index` | Bearer | Index a `directory_path`; accepts `wait`, `incremental`, `file_patterns` |
+| POST | `/api/v1/search` | Bearer | Search a `project_path` with `query`, optional `k`/`filters` |
+| GET / DELETE | `/api/v1/jobs/{job_id}` | Bearer | Inspect/cancel; requires the `project` query parameter |
+| GET | `/api/v1/paths` | Bearer | Every file of a project's committed generation, sorted by path, with its chunk count and [per-path search statistics](docs/tui.md#per-path-statistics); requires the `project` query parameter |
+| GET | `/api/v1/openapi.json` | Bearer | The OpenAPI 3.1 description of these routes |
+| GET | `/`, `/ui` | None | Redirect (307) to `/ui/` |
+| GET | `/ui/` and `/ui/{path}` | None | Dashboard files; an extensionless path naming no file returns the dashboard's `index.html` (always with `Cache-Control: no-cache`); a missing file with an extension returns 404; 503 until a dashboard build exists |
 
-These routes use the same bearer token as MCP. Use the CLI for ordinary administration so it reads the saved endpoint/token for you.
+The `/api/v1` routes use the same bearer token as MCP; a missing or wrong token returns 401. `/api/v1/paths` answers 400 for an unregistered project and returns `generation: null` with no paths before the first committed index. The `/` and `/ui` routes serve only static files and need no token, but every request, including these, must pass the loopback Host/Origin checks (403 otherwise); dashboard responses carry `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` headers, and paths outside the dashboard directory, like missing files with an extension, return 404. [packages/code-search-local-api/openapi.yaml](packages/code-search-local-api/openapi.yaml) is the only definition of their request and response models: builds generate pydantic models from it, the service validates request bodies (400 on mismatch) and every response (500 if the service itself would break the contract), and the dashboard generates its zod schemas from the same document. Use the CLI for ordinary administration so it reads the saved endpoint/token for you.
 
 ## Troubleshooting
 
@@ -801,9 +837,27 @@ These routes use the same bearer token as MCP. Use the CLI for ordinary administ
 | Expected files are missing | Check ignore files, supported extensions, `--pattern` restrictions and `max_file_bytes`. Reindex after correcting them. |
 | Model changed since the index was built | Reindex with the current configured model; `index --rebuild` explicitly requests a full rebuild. |
 | Tools absent after setup | Reconnect/restart the client. Confirm setup selected that client and the expected config directory. |
-| Live statistics show offline state | Start the service and check the saved endpoint/storage; the live view reconnects. `--json` and `--live` are mutually exclusive. |
+| Live statistics show offline state | Start the service and check the saved endpoint/storage; the live view reconnects, also after error notifications. `--json` and `--live` are mutually exclusive, and `--live` needs a terminal on stdout. See [statistics troubleshooting](docs/tui.md#troubleshooting) for socket and hit-rate questions. |
+| Dashboard answers 503 | No dashboard build was found. Run `pnpm install` and `pnpm build` in the checkout, or point `CODE_SEARCH_WEBAPP_DIR` at a built dashboard through setup. |
+| Dashboard asks for a token | Open the URL printed by `code-search-local web`; the token travels in its `#token=` fragment. After a 401, the dashboard discards its token and asks again. |
+| Dashboard answers 403 | Open it through `127.0.0.1`, `localhost` or `[::1]` with the service's own port; a port forward must keep the port number. See [dashboard troubleshooting](docs/webapp.md#troubleshooting). |
 
 `doctor --inference` requires server/model dependencies in the executing Python environment and loads a model for diagnostics. A lightweight CLI installation may not contain those dependencies. Setup already runs this check inside the managed backend environment; use `warmup` to exercise the running daemon, or run `doctor --inference` from a development environment with the matching server/backend extras.
+
+## Repository layout
+
+The repository is a pnpm workspace that holds the Python service and its TypeScript companions. Run Hatch and pnpm commands from the repository root.
+
+| Path | Contents |
+|---|---|
+| `pyproject.toml`, `uv.lock`, `.venvs/` | Python project metadata, dependencies, Hatch scripts and environments, and the lockfile |
+| `packages/code-search-local/` | The Python service: `src/code_search_local` (application), `tests`, and `scripts` (API model build hook, code-rule audit, coverage check, cleanup, install and other Python tooling). Its `package.json` only forwards `test`, `lint` and `coverage` to Hatch. |
+| `packages/code-search-local-api/` | `openapi.yaml`, the single definition of the HTTP API, and the TypeScript package that generates zod schemas and types from it |
+| `packages/code-search-local-webapp/` | The React web dashboard that the service serves at `/ui/` |
+| `plugins/`, `.claude-plugin/` | Portable plugin manifest, setup skill and marketplace catalog |
+| `docs/` | Statistics UI and dashboard guides, validation records and dependency selection |
+| `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `tsconfig.json`, `jest.config.ts`, `eslint.config.mjs`, `.prettierrc.js`, `etc/`, `scripts/` | TypeScript workspace configuration and its `.mjs` check scripts |
+| `STYLE.md`, `.agents/rules/` | The TypeScript style guide and the repository rules that apply to both languages |
 
 ## Architecture and development
 
@@ -811,7 +865,7 @@ Each project serializes its indexing requests. A bounded shared parsing pool pro
 
 watchfiles detects changes, content hashes determine the actual additions/modifications/deletions, and an embedding cache avoids repeated inference for matching content/model/encoding. Startup recovers interrupted jobs and reconciles registered workspaces. Legacy indexes are backed up under `legacy-backups/` before rebuilding; existing Hugging Face model caches are reused.
 
-Source lives under `src/code_search_local/`, fixtures under `tests/conftest.py`, with Hatchling build configuration in `pyproject.toml`. All dependencies/tool settings are declared in `pyproject.toml`; `uv.lock` records reproducible resolution. Hatchling reads the version from `src/code_search_local/__init__.py` and maps the canonical lock, metadata and plugin resources directly into distributions; no custom build script or generated source copies are needed. Environments, indexes, logs, coverage output and distribution artifacts are ignored by Git.
+Source lives under `packages/code-search-local/src/code_search_local/`, fixtures under `packages/code-search-local/tests/conftest.py`, with Hatchling build configuration in the repository-root `pyproject.toml`. All dependencies/tool settings are declared in `pyproject.toml`; `uv.lock` records reproducible resolution. Hatchling reads the version from `packages/code-search-local/src/code_search_local/__init__.py` and maps the canonical lock, metadata and plugin resources directly into distributions. A Hatch build hook ([api_models.py](packages/code-search-local/scripts/api_models.py)) generates the git-ignored API models from the OpenAPI document for wheel and editable builds, and bundles a built web dashboard into release wheels and sdists when one exists; no other generated source copies are needed. Environments, indexes, logs, coverage output and distribution artifacts are ignored by Git.
 
 ```sh
 hatch run cpu:sync
@@ -820,10 +874,28 @@ hatch run lint
 hatch build
 ```
 
-`hatch run lint` also runs the [code-rule audit](scripts/check_code_rules.py); use `hatch run rules` to run it alone. Operational values (schema keys, paths, protocol identifiers, defaults and timing budgets) live in named constants. Docstrings and explanatory prose stay inline. Shared behavior belongs in helpers when a 5+ line block occurs three times, or an 8+ line block occurs twice. The audit checks common operational-literal syntax and exact duplication, including repeated blocks within one file; review also checks parameterizable variants. Parser fixture source files are input data, not executed application code.
+The HTTP API is defined once, in [packages/code-search-local-api/openapi.yaml](packages/code-search-local-api/openapi.yaml) (OpenAPI 3.1); no API model is written by hand in either language. For Python, the build hook (also run by `hatch run generate`, and first by `test`, `coverage` and `lint`) generates pydantic v2 models and a JSON copy of the document as the git-ignored `code_search_local/api/models.py` and `openapi.json`. For TypeScript, the API workspace package generates zod 4 schemas and types into its git-ignored `src/generated/` (`pnpm run generate`, also run by `compile`, `build`, `check` and `dev`), and the dashboard imports them from that package. The service parses request bodies through the generated models, validates every `/api/v1` response against them before sending it, and serves the document at `/api/v1/openapi.json`. To change the API, edit `openapi.yaml`, regenerate, then update the service and dashboard; never edit or commit generated files.
 
-The project rule lives in [.agents/rules/constants-and-duplication.md](.agents/rules/constants-and-duplication.md), with `.claude/rules` symlinked to that directory. Application contracts are in `src/code_search_local/constants.py`; test-only inputs and budgets are in `tests/constants.py`. The standalone cleanup script keeps its own constants so it can inspect a broken or absent installation.
+The TypeScript packages form a pnpm workspace (`pnpm-workspace.yaml`, `packages/*`) that requires Node.js 24.9 or later and pnpm 12.6.0. From the repository root:
 
-See [tests/README.md](tests/README.md) for the real two-Claude, GPU, systemd, marketplace and installer acceptance lanes, and [docs/validation.md](docs/validation.md) for recorded results. CI runs deterministic coverage and artifact installation checks. The manually dispatched release workflow requires acceptance checks before optional PyPI publication.
+```sh
+pnpm install   # workspace dependencies
+pnpm check     # generate, then layout, conventions, format, lint, build and tests in order
+pnpm build     # generate, type-check, and bundle the dashboard into packages/code-search-local-webapp/dist
+pnpm test      # workspace script tests, then compile and run the jest projects
+pnpm test:e2e  # build, then Playwright specs against the Python test daemon (needs .venvs/cpu and Chromium)
+pnpm dev       # dashboard dev server with hot reload on 127.0.0.1:8100, proxying /api to the service
+hatch build    # wheel and sdist, bundling the built dashboard when it exists
+```
+
+See the [web dashboard guide](docs/webapp.md#development) for the dev server's variables, getting a token for it, and the end-to-end setup.
+
+`hatch build` copies `packages/code-search-local-webapp/dist` into the wheel as `code_search_local/assets/webapp`, and into the sdist so that a wheel rebuilt from it keeps the dashboard, only when that build exists; run `pnpm build` first for a release that serves `/ui/`. Without it, artifacts still build and the service runs without the dashboard. `hatch run cpu:sync`, editable installs and source setup never need Node.js. `pnpm run format:check` applies Prettier to the workspace's TypeScript, YAML and Markdown; `.prettierignore` excludes the Python package and Python-oriented documents such as this README, which keep their own wrapping.
+
+`hatch run lint` also runs the [code-rule audit](packages/code-search-local/scripts/check_code_rules.py); use `hatch run rules` to run it alone. Operational values (schema keys, paths, protocol identifiers, defaults and timing budgets) live in named constants. Docstrings and explanatory prose stay inline. Shared behavior belongs in helpers when a 5+ line block occurs three times, or an 8+ line block occurs twice. The audit checks common operational-literal syntax and exact duplication, including repeated blocks within one file; review also checks parameterizable variants. Parser fixture source files are input data, not executed application code.
+
+The project rule lives in [.agents/rules/constants-and-duplication.md](.agents/rules/constants-and-duplication.md), with `.claude/rules` symlinked to that directory. It binds the Python and TypeScript code alike; TypeScript code additionally follows [STYLE.md](STYLE.md), checked by `pnpm lint` and `pnpm check`. Application contracts are in `packages/code-search-local/src/code_search_local/constants.py`; test-only inputs and budgets are in `packages/code-search-local/tests/constants.py`. The standalone cleanup script keeps its own constants so it can inspect a broken or absent installation.
+
+See [packages/code-search-local/tests/README.md](packages/code-search-local/tests/README.md) for the real two-Claude, GPU, systemd, marketplace and installer acceptance lanes, and [docs/validation.md](docs/validation.md) for recorded results. CI runs deterministic coverage and artifact installation checks. The manually dispatched release workflow requires acceptance checks before optional PyPI publication.
 
 Licensed under GPL-3.0-only; see [LICENSE](LICENSE). The original project was created by Farhan Ali Raza and inspired by [zilliztech/claude-context](https://github.com/zilliztech/claude-context). Historical authorship and license attribution are retained.
